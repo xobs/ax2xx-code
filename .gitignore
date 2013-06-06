@@ -1,6 +1,10 @@
 *.o
 *.bin
-as31
-as31.1
+
 *.swp
 *.swo
+
+as31
+as31.1
+
+ax211
