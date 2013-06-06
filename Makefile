@@ -25,10 +25,10 @@ CC=gcc
 
 all: as31 TestBoot.bin ax211
 
-as31:
+as31: src/as31
 	+make -C src/as31
 
-ax211:
+ax211: src/ax211
 	+make -C src/ax211
 
 TestBoot.bin: TestBoot.asm as31
