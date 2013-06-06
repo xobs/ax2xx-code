@@ -32,29 +32,17 @@ CC=gcc
 
 OBJ=run.o lexer.o parser.o symbol.o emitter.o
 
-all: as31 TestBoot.bin ax211
+all: ../../as31
 
-as31: $(OBJ) as31.o
-	$(CC) $(CFLAGS) -o as31 $(OBJ) as31.o
-	chmod a+rx as31
-	strip as31
+../../as31: $(OBJ) as31.o
+	$(CC) $(CFLAGS) -o ../../as31 $(OBJ) as31.o
+	chmod a+rx ../../as31
+	strip ../../as31
 
 as31_gtk: $(OBJ) as31_gtk.o
 	$(CC) $(CFLAGS) -o as31_gtk $(OBJ) as31_gtk.o `gtk-config --libs`
 	chmod a+rx as31
 	strip as31
-
-ax211:
-	make -C ax211-util
-
-TestBoot.bin: TestBoot.asm as31
-	./as31 -Fbin TestBoot.asm
-	# The ROM has an origin of 0x2900.  Pull it out.
-	dd if=TestBoot.bin of=tmp.bin bs=10496 skip=1 2> /dev/null
-	# Pad it with 0xff and bring it up to 512 bytes
-	perl -e 'print chr(0xff) for(0..510); print chr(0x00);' > TestBoot.bin
-	dd if=tmp.bin of=TestBoot.bin conv=notrunc 2> /dev/null
-	rm -f tmp.bin
 
 as31_gtk.o: as31_gtk.c as31.h
 	$(CC) $(CFLAGS) `gtk-config --cflags` -c as31_gtk.c 
@@ -67,7 +55,5 @@ parser.o: parser.c as31.h
 run.o: run.c as31.h
 
 clean:
-	rm -f as31 as31.1 as31_gtk *~ *.o core
+	rm -f ../../as31 as31.1 as31_gtk *~ *.o core
 	rm -f *.lst *.hex *.tdr *.byte *.od *.srec
-	rm -f TestBoot.bin
-	make -C ax211-util clean
