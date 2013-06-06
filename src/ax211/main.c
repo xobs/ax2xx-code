@@ -66,7 +66,7 @@ static int load_rom_file(struct sd_state *state, char *file) {
 
     fd = open(file, O_RDONLY);
     if (-1 == fd) {
-        perror("Couldn't open file");
+        perror("Couldn't open ROM file");
         return 1;
     }
 
@@ -87,7 +87,7 @@ static int print_header(uint8_t *bfr) {
 
 
 
-int send_cmdX(struct sd_state *state, 
+static int send_cmdX(struct sd_state *state, 
 		uint8_t cmd,
 		uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4,
 		int print_size) {
@@ -115,7 +115,7 @@ int send_cmdX(struct sd_state *state,
 }
 
 
-int do_get_csd_cid(struct sd_state *state) {
+static int do_get_csd_cid(struct sd_state *state) {
 	sd_reset(state, 2);
 
 	printf("CSD:\n");
@@ -140,7 +140,7 @@ static int drain_nand_addrs(struct sd_state *state) {
 }
 
 
-int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
+static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     uint8_t sub_bfr[4][size/4];
     uint16_t crcs[4];
     int i;
@@ -245,7 +245,7 @@ int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     return 0;
 }
 
-int interesting_one_cycle(struct sd_state *state, int run, int seed) {
+static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     uint8_t response[560];
     uint8_t file[512+(4*sizeof(uint16_t))];
 	int i = 0;
@@ -319,7 +319,7 @@ int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     return 0;
 }
 
-int do_interestingness(struct sd_state *state, int *seed, int *loop) {
+static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
 	int run;
     int val;
     int s;
@@ -371,7 +371,7 @@ int do_interestingness(struct sd_state *state, int *seed, int *loop) {
     return val;
 }
 
-int do_one_ecc_knock(struct sd_state *state, int seed, int run) {
+static int do_one_ecc_knock(struct sd_state *state, int seed, int run) {
     int i;
     int addrs;
     uint8_t ecc_region[16] = {
@@ -420,7 +420,7 @@ int do_one_ecc_knock(struct sd_state *state, int seed, int run) {
     }
 }
 
-int do_bang_on_ecc(struct sd_state *state) {
+static int do_bang_on_ecc(struct sd_state *state) {
     int run;
     int seed;
     int i;
@@ -479,19 +479,96 @@ static int do_validate_file(struct sd_state *state) {
 }
 
 
+
+static int do_execute_file(struct sd_state *state,
+                           int run,
+                           int seed,
+                           char *filename) {
+    uint8_t response[560];
+    uint8_t file[512+(4*sizeof(uint16_t))];
+    int ret;
+
+    memset(response, 0, sizeof(response));
+    memset(file, 0xff, sizeof(file));
+    srand(seed);
+
+    // Load in the specified file
+    {
+        int fd = open(filename, O_RDONLY);
+        if (-1 == fd) {
+            perror("Unable to load rom file");
+            return 1;
+        }
+        read(fd, file, 512);
+        close(fd);
+    }
+
+    printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
+
+    // Actually enter factory mode (sends CMD63/APPO and waits for response)
+    ret = sd_enter_factory_mode(state, run);
+    if (-1 == ret) {
+        printf("Couldn't enter factory mode\n");
+        return -1;
+    }
+
+    // Randomly permute the areas we're setting
+    /*
+    file[0x39] = rand()|0x80;
+    file[0x3a] = (rand()&1)?0xFF:0x00;
+
+    file[0x3c] = rand()|0x80;
+    file[0x3d] = (rand()&1)?0xFF:0x00;
+
+    file[0x3f] = rand()|0x80;
+    file[0x40] = (rand()&1)?0xFF:0x00;
+
+    file[0x4f] = rand()|0x80;
+    file[0x54] = file[0x54];
+    */
+    file[0x41] = run;
+
+    calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
+    xmit_mmc_dat4(state, file, sizeof(file));
+    //rcvr_mmc_dat1_start(state, 256);
+    rcvr_mmc_cmd(state, response, sizeof(response));
+
+    printf("Result of factory mode: %d\n", ret);
+
+    printf("File:\n");
+    print_hex(file, sizeof(file));
+    static int romfile;
+    if (!romfile)
+        romfile = open("ax211rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    write(romfile, response, 512);
+    if (run>=64)
+        exit(0);
+
+    printf("\nResponse (value: %02x):\n", (response[0]^2));
+    print_hex(response, sizeof(response));
+    printf("mov FSR_%02x, #0x%02x\n", file[0x39], file[0x3a]);
+    printf("mov FSR_%02x, #0x%02x\n", file[0x3c], file[0x3d]);
+    printf("mov FSR_%02x, #0x%02x\n", file[0x3f], file[0x40]);
+    printf("Data stored in FSR_%02x\n", file[0x4f]);
+
+    return 0;
+}
+
+
 static int print_help(char *name) {
     printf("Usage:\n"
         "Modes:\n"
-        "\t%s -f   Runs a fuzz test in factory mode\n"
-        "\t%s -c   Boots normally and prints CSD/CID\n"
-        "\t%s -e   Tries banging on ECC\n"
-        "\t%s -e   Validate the firmware file\n"
+        "\t%s -f         Runs a fuzz test in factory mode\n"
+        "\t%s -c         Boots normally and prints CSD/CID\n"
+        "\t%s -e         Tries banging on ECC\n"
+        "\t%s -e         Validate the firmware file\n"
+        "\t%s -x [file]  Enters factory mode and executes the file\n"
         "Options:\n"
         " -s [seed]    Specifies a seed for random values\n"
         " -r [file]    Writes the specified ROM file to NAND\n"
         " -l [loop]    Execute the loop with run=[loop]\n"
         ,
-        name, name, name, name);
+        name, name, name, name, name);
     return 0;
 }
 
@@ -500,11 +577,17 @@ int main(int argc, char **argv) {
 	struct sd_state *state;
 	int mode = -1;
 	int ch;
+
     int seed;
     int have_seed = 0;
+
     int loop;
     int have_loop = 0;
+
     int rom_file_written = 0;
+
+    char prog_filename[512];
+
 
 	srand(time(NULL));
 
@@ -513,7 +596,7 @@ int main(int argc, char **argv) {
         return 1;
 
 
-	while ((ch = getopt(argc, argv, "vefchs:r:l:")) != -1) {
+	while ((ch = getopt(argc, argv, "vefchs:r:l:x:")) != -1) {
 		switch(ch) {
 		case 'c':
 			mode = 1;
@@ -546,6 +629,11 @@ int main(int argc, char **argv) {
             mode = 3;
             break;
 
+        case 'x':
+            strncpy(prog_filename, optarg, sizeof(prog_filename)-1);
+            mode = 4;
+            break;
+
 		case 'h':
         default:
             print_help(argv[0]);
@@ -569,6 +657,8 @@ int main(int argc, char **argv) {
         ret = do_bang_on_ecc(state);
     else if (mode == 3)
         ret = do_validate_file(state);
+    else if (mode == 4)
+        ret = do_execute_file(state, loop, seed, prog_filename);
 
 	//sd_deinit(&state);
 
