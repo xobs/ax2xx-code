@@ -12,10 +12,6 @@ The assembler originally comes from https://www.pjrc.com/tech/8051/.  It is
 a beta test release.  The parser.y file is pre-processed due to Bison not
 functioning on the current Novena OpenEmbedded distribution.
 
-Please report any problems to
-
-paul@pjrc.com
-
 
 Utility
 -------
