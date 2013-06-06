@@ -78,11 +78,17 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
 
 SP:     Stack Pointer
+
 DPL:    Data Pointer (low)
+
 DPH:    Data Pointer (high)
+
 IE:     Interrupt enable
+
 PORT1:  GPIO for the NAND port.
+
 ACC:    Accumulator
+
 B:      Scratch register.  Used for multiply/divide operations.
 
 
