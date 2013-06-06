@@ -246,7 +246,7 @@ static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
 }
 
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
-    uint8_t response[560];
+    uint8_t response[16];
     uint8_t file[512+(4*sizeof(uint16_t))];
 	int i = 0;
     int ret;
@@ -264,25 +264,33 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         return -1;
     }
 
-    int fd = open("ax211code.bin", O_RDONLY);
+    int fd = open("TestBoot.bin", O_RDONLY);
     read(fd, file, 512);
     close(fd);
 
     // Randomly permute the areas we're setting
+    file[0x4a] = rand()|0x80;
+    file[0x4b] = (rand()&1)?0xFF:0x00;
+
+    file[0x4d] = rand()|0x80;
+    file[0x4e] = (rand()&1)?0xFF:0x00;
+
+    file[0x56] = rand()|0x80;
+    file[0x59] = rand()|0x80;
+    file[0x5c] = rand()|0x80;
+    file[0x5f] = rand()|0x80;
+    file[0x65] = file[0x56];
+    file[0x68] = file[0x59];
+    file[0x6a] = file[0x5c];
+    file[0x6d] = file[0x5f];
+
     /*
-    file[0x39] = rand()|0x80;
-    file[0x3a] = (rand()&1)?0xFF:0x00;
+    file[0x50] = rand()|0x80;
+    file[0x51] = rand();//(rand()&1)?0xFF:0x00;
 
-    file[0x3c] = rand()|0x80;
-    file[0x3d] = (rand()&1)?0xFF:0x00;
-
-    file[0x3f] = rand()|0x80;
-    file[0x40] = (rand()&1)?0xFF:0x00;
-
-    file[0x4f] = rand()|0x80;
-    file[0x54] = file[0x54];
+    file[0x53] = rand()|0x80;
+    file[0x54] = rand();//(rand()&1)?0xFF:0x00;
     */
-    file[0x41] = run;
 
     calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
@@ -293,28 +301,19 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
 
     printf("File:\n");
     print_hex(file, sizeof(file));
-    static int romfile;
-    if (!romfile)
-        romfile = open("ax211rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    write(romfile, response, 512);
-    if (run>=64)
-        exit(0);
 
-    printf("\nResponse (value: %02x):\n", (response[0]^2));
+    printf("\nResponse:\n");
     print_hex(response, sizeof(response));
-    printf("mov FSR_%02x, #0x%02x\n", file[0x39], file[0x3a]);
-    printf("mov FSR_%02x, #0x%02x\n", file[0x3c], file[0x3d]);
-    printf("mov FSR_%02x, #0x%02x\n", file[0x3f], file[0x40]);
-    printf("Data stored in FSR_%02x\n", file[0x4f]);
-
-    return 0;
-    // Look for the start of "0xff"
-    for (i=0; i<sizeof(response) && response[i] != 0xff; i++);
-
-    // See if it changes back
-    for (; i<sizeof(response); i++)
-        if (response[i] != 0xff)
-            return 1;
+    printf("mov FSR_%02x, #0x%02x\n", file[0x4a], file[0x4b]);
+    printf("mov FSR_%02x, #0x%02x\n", file[0x4d], file[0x4e]);
+    //printf("mov FSR_%02x, #0x%02x\n", file[0x50], file[0x51]);
+    //printf("mov FSR_%02x, #0x%02x\n", file[0x53], file[0x54]);
+    printf("mov FSR_%02x, #0xff/00\n", file[0x56]);
+    printf("mov FSR_%02x, #0xff/00\n", file[0x59]);
+    printf("mov FSR_%02x, #0xff/00\n", file[0x5c]);
+    printf("mov FSR_%02x, #0xff/00\n", file[0x5f]);
+    printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
+    usleep(1000000);
 
     return 0;
 }
@@ -358,15 +357,6 @@ static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
             }
         }
     }
-
-    printf("We good?\n");
-
-    int i;
-    for (i=0; i<64; i++) {
-        send_cmdX(state, i, 0, 0, 0, 0, 1);
-    }
-
-	printf("Interestingness!!!!\n");
 
     return val;
 }
@@ -487,6 +477,7 @@ static int do_execute_file(struct sd_state *state,
     uint8_t response[560];
     uint8_t file[512+(4*sizeof(uint16_t))];
     int ret;
+    int tries;
 
     memset(response, 0, sizeof(response));
     memset(file, 0xff, sizeof(file));
@@ -506,27 +497,14 @@ static int do_execute_file(struct sd_state *state,
     printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
 
     // Actually enter factory mode (sends CMD63/APPO and waits for response)
-    ret = sd_enter_factory_mode(state, run);
-    if (-1 == ret) {
-        printf("Couldn't enter factory mode\n");
-        return -1;
+    ret = -1;
+    for (tries=0; ret<0 && tries<10; tries++) {
+        ret = sd_enter_factory_mode(state, run);
+        if (-1 == ret)
+            printf("Couldn't enter factory mode, trying again (%d/10)\n", tries+1);
     }
-
-    // Randomly permute the areas we're setting
-    /*
-    file[0x39] = rand()|0x80;
-    file[0x3a] = (rand()&1)?0xFF:0x00;
-
-    file[0x3c] = rand()|0x80;
-    file[0x3d] = (rand()&1)?0xFF:0x00;
-
-    file[0x3f] = rand()|0x80;
-    file[0x40] = (rand()&1)?0xFF:0x00;
-
-    file[0x4f] = rand()|0x80;
-    file[0x54] = file[0x54];
-    */
-    file[0x41] = run;
+    if (-1 == ret)
+        return -1;
 
     calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
@@ -541,15 +519,9 @@ static int do_execute_file(struct sd_state *state,
     if (!romfile)
         romfile = open("ax211rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     write(romfile, response, 512);
-    if (run>=64)
-        exit(0);
 
-    printf("\nResponse (value: %02x):\n", (response[0]^2));
+    printf("\nResponse:\n");
     print_hex(response, sizeof(response));
-    printf("mov FSR_%02x, #0x%02x\n", file[0x39], file[0x3a]);
-    printf("mov FSR_%02x, #0x%02x\n", file[0x3c], file[0x3d]);
-    printf("mov FSR_%02x, #0x%02x\n", file[0x3f], file[0x40]);
-    printf("Data stored in FSR_%02x\n", file[0x4f]);
 
     return 0;
 }
