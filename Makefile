@@ -23,7 +23,10 @@
 CFLAGS=-O3 -Wall
 CC=gcc
 
-all: as31 TestBoot.bin ax211
+PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin
+PROGRAMS=$(PROGRAM_SOURCES:.c=.o)
+
+all: as31 ax211 $(PROGRAMS)
 
 as31: src/as31
 	+make -C src/as31
@@ -31,16 +34,13 @@ as31: src/as31
 ax211: src/ax211
 	+make -C src/ax211
 
-TestBoot.bin: TestBoot.asm as31
-	./as31 -Fbin TestBoot.asm
-	# The ROM has an origin of 0x2900.  Pull it out.
-	dd if=TestBoot.bin of=tmp.bin bs=10496 skip=1 2> /dev/null
-	# Pad it with 0xff and bring it up to 512 bytes
-	perl -e 'print chr(0xff) for(0..510); print chr(0x00);' > TestBoot.bin
-	dd if=tmp.bin of=TestBoot.bin conv=notrunc 2> /dev/null
-	rm -f tmp.bin
+%.bin: %.asm as31
+	./as31 -Fbin $<
+	@mv $@ tmp.bin
+	@dd if=tmp.bin of=$@ bs=10496 skip=1 2> /dev/null
+	@rm -f tmp.bin
 
 clean:
 	make -C src/ax211 clean
 	make -C src/as31 clean
-	rm -f TestBoot.bin
+	rm -f TestBoot.bin dump-rom.bin blink-led.bin
