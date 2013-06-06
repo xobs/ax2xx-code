@@ -42,6 +42,7 @@
    There are some unavoidable exceptions within include files to
    define necessary library symbols; they are noted "INFRINGES ON
    USER NAME SPACE" below.  */
+#include <string.h>
 
 /* Identify Bison output.  */
 #define YYBISON 1
@@ -3376,7 +3377,7 @@ void dumplist(char *txt, int show)
 {
 	int i,j;
 
-	fprintf(listing,show?"%04X: ":"      ",lc);
+	fprintf(listing,show?"%04lX: ":"      ",lc);
 
 	j=0;
 	for(i=0; i<bytecount; i++ ) {

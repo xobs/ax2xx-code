@@ -32,7 +32,7 @@ CC=gcc
 
 OBJ=run.o lexer.o parser.o symbol.o emitter.o
 
-all: as31 TestBoot.bin
+all: as31 TestBoot.bin ax211
 
 as31: $(OBJ) as31.o
 	$(CC) $(CFLAGS) -o as31 $(OBJ) as31.o
@@ -44,6 +44,9 @@ as31_gtk: $(OBJ) as31_gtk.o
 	chmod a+rx as31
 	strip as31
 
+ax211:
+	make -C ax211-util
+
 TestBoot.bin: TestBoot.asm
 	./as31 -Fbin TestBoot.asm
 	dd if=TestBoot.bin of=tmp.bin bs=10496 skip=1 2> /dev/null
@@ -51,9 +54,6 @@ TestBoot.bin: TestBoot.asm
 	dd if=tmp.bin of=TestBoot.bin conv=notrunc 2> /dev/null
 	rm -f tmp.bin
 	cp TestBoot.bin ax211code.bin
-
-parser.c parser.h: parser.y
-	bison -d -o parser.c parser.y
 
 as31_gtk.o: as31_gtk.c as31.h
 	$(CC) $(CFLAGS) `gtk-config --cflags` -c as31_gtk.c 
@@ -66,5 +66,6 @@ parser.o: parser.c as31.h
 run.o: run.c as31.h
 
 clean:
-	rm -f as31 as31_gtk *~ *.o parser.c parser.h core
+	rm -f as31 as31.1 as31_gtk *~ *.o core
 	rm -f *.lst *.hex *.tdr *.byte *.od *.srec
+	make -C ax211-util clean
