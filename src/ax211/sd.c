@@ -97,7 +97,7 @@ struct sd_state {
 
 #define	CS_H()		gpio_set_value(state->cs, CS_DESEL) /* Set MMC CS "high" */
 #define	CS_L()		gpio_set_value(state->cs, CS_SEL) /* Set MMC CS "low" */
-#define	CK_H()		gpio_set_value(state->clk, 1); usleep(1); /* Set MMC CLK "high" */
+#define	CK_H()		gpio_set_value(state->clk, 1); usleep(1) /* Set MMC CLK "high" */
 #define	CK_L()		gpio_set_value(state->clk, 0) /* Set MMC CLK "low" */
 #define	DI_H()		gpio_set_value(state->mosi, 1) /* Set MMC DI "high" */
 #define	DI_L()		gpio_set_value(state->mosi, 0) /* Set MMC DI "low" */
@@ -164,6 +164,12 @@ static int init_port(struct sd_state *state) {
 }
 
 
+int sd_toggle_clk(struct sd_state *state, int times) {
+    while(times--) {
+        CK_H(); CK_L();
+    }
+    return 0;
+}
 
 
 
@@ -296,6 +302,7 @@ int rcvr_mmc_dat1_start(struct sd_state *state, int tries) {
 
 int rcvr_mmc_cmd_start(struct sd_state *state, int tries) {
     int attempts = 0;
+    gpio_set_direction(state->cmd, GPIO_IN);
     while (attempts < tries && gpio_get_value(state->cmd)) {
         attempts++;
         CK_L(); CK_H();
@@ -386,6 +393,16 @@ void rcvr_mmc_dat1 (
 /* Receive bytes from the card (bitbanging)                              */
 /*-----------------------------------------------------------------------*/
 
+static int gpio_really_get_value(int gpio) {
+    int states[3];
+    states[0] = gpio_get_value(gpio);
+    states[1] = gpio_get_value(gpio);
+    states[2] = gpio_get_value(gpio);
+    if (states[0] != states[1] || states[1] != states[2])
+        fprintf(stderr, "GPIO state has changed! %d/%d/%d\n", states[0], states[1], states[2]);
+    return states[2];
+}
+
 void rcvr_mmc_cmd (
 	struct sd_state *state,
 	uint8_t *buff,	/* Pointer to read buffer */
@@ -397,21 +414,21 @@ void rcvr_mmc_cmd (
     gpio_set_direction(state->cmd, GPIO_IN);
 
 	do {
-		r = 0;	 if (gpio_get_value(state->cmd)) r++;	/* bit7 */
+		r = 0;	 if (gpio_really_get_value(state->cmd)) r++;	/* bit7 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit6 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit6 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit5 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit5 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit4 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit4 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit3 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit3 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit2 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit2 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit1 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit1 */
 		CK_H(); CK_L();
-		r <<= 1; if (gpio_get_value(state->cmd)) r++;	/* bit0 */
+		r <<= 1; if (gpio_really_get_value(state->cmd)) r++;	/* bit0 */
 		CK_H(); CK_L();
 		*buff++ = r;			/* Store a received byte */
 	} while (--bc);

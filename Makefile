@@ -23,7 +23,7 @@
 CFLAGS=-O3 -Wall
 CC=gcc
 
-PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin
+PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin debugger.bin
 PROGRAMS=$(PROGRAM_SOURCES:.c=.o)
 
 all: as31 ax211 $(PROGRAMS)

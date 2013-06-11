@@ -105,6 +105,8 @@ void rcvr_mmc_dat4 (
     uint32_t bc     /* Number of bytes to receive */
 );
 
+int sd_toggle_clk(struct sd_state *state, int times);
+int rcvr_mmc_cmd_start(struct sd_state *state, int tries);
 
 int sd_enter_factory_mode(struct sd_state *state, uint8_t type);
 

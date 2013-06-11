@@ -4,6 +4,7 @@
 #include <strings.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -139,6 +140,17 @@ static int drain_nand_addrs(struct sd_state *state) {
     return val;
 }
 
+static int read_file(char *filename, uint8_t *bfr, int size) {
+    int fd = open(filename, O_RDONLY);
+    if (-1 == fd) {
+        printf("Unable to load rom file %s: %s\n", filename, strerror(errno));
+        return 1;
+    }
+    read(fd, bfr, size);
+    close(fd);
+    return 0;
+}
+
 
 static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     uint8_t sub_bfr[4][size/4];
@@ -245,8 +257,59 @@ static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     return 0;
 }
 
+
+static int load_and_enter_debugger(struct sd_state *state, char *filename) {
+    uint8_t response[560];
+    uint8_t file[512+(4*sizeof(uint16_t))];
+    memset(file, 0xff, sizeof(file));
+
+    // Load in the debugger stub
+    if (read_file(filename, file, 512))
+        return 1;
+    calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
+
+    while(1) {
+        int ret;
+        int tries;
+        // Actually enter factory mode (sends CMD63/APPO and waits for response)
+        ret = -1;
+        for (tries=0; ret<0 && tries<10; tries++) {
+            ret = sd_enter_factory_mode(state, 0);
+            if (-1 == ret)
+                printf("Couldn't enter factory mode, trying again (%d/10)\n", tries+1);
+        }
+        // Couldn't enter factory mode, abort
+        if (-1 == ret)
+            return 1;
+
+        xmit_mmc_dat4(state, file, sizeof(file));
+        rcvr_mmc_cmd(state, response, 1);
+        printf("Immediate code-load response: %02x\n", response[0]);
+
+        for (tries=0; tries<2; tries++) {
+            if (-1 != rcvr_mmc_cmd_start(state, 50))
+                break;
+            usleep(50000);
+        }
+        // Couldn't enter debugger, try again
+        if (-1 != rcvr_mmc_cmd_start(state, 50))
+            continue;
+
+        rcvr_mmc_cmd(state, response, sizeof(response));
+
+        printf("Result of factory mode: %d\n", ret);
+        printf("\nResponse (%02x):\n", response[0]);
+        if (response[0] != 0x3f)
+            continue;
+        print_hex(response+1, sizeof(response)-1);
+        break;
+    }
+    return 0;
+}
+
+
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
-    uint8_t response[16];
+    uint8_t response[512];
     uint8_t file[512+(4*sizeof(uint16_t))];
 	int i = 0;
     int ret;
@@ -264,56 +327,58 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         return -1;
     }
 
-    int fd = open("TestBoot.bin", O_RDONLY);
+    int fd = open("dump-rom.bin", O_RDONLY);
     read(fd, file, 512);
     close(fd);
 
-    // Randomly permute the areas we're setting
-    file[0x4a] = rand()|0x80;
-    file[0x4b] = (rand()&1)?0xFF:0x00;
+    file[0x75] = run;
+    file[0x78] = run>>8;
 
-    file[0x4d] = rand()|0x80;
-    file[0x4e] = (rand()&1)?0xFF:0x00;
-
-    file[0x56] = rand()|0x80;
-    file[0x59] = rand()|0x80;
-    file[0x5c] = rand()|0x80;
-    file[0x5f] = rand()|0x80;
-    file[0x65] = file[0x56];
-    file[0x68] = file[0x59];
-    file[0x6a] = file[0x5c];
-    file[0x6d] = file[0x5f];
-
-    /*
-    file[0x50] = rand()|0x80;
-    file[0x51] = rand();//(rand()&1)?0xFF:0x00;
-
-    file[0x53] = rand()|0x80;
-    file[0x54] = rand();//(rand()&1)?0xFF:0x00;
-    */
+    static int rom_fd;
+    if (!rom_fd)
+        rom_fd = open("ax211-rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
     calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
-    //rcvr_mmc_dat1_start(state, 256);
+    rcvr_mmc_cmd(state, response, 2);
+    for (i=0; i<3; i++) {
+        if (-1 != rcvr_mmc_cmd_start(state, 50))
+            break;
+        usleep(50000);
+    }
+    if (-1 != rcvr_mmc_cmd_start(state, 5))
+        return -1;
     rcvr_mmc_cmd(state, response, sizeof(response));
 
     printf("Result of factory mode: %d\n", ret);
 
-    printf("File:\n");
-    print_hex(file, sizeof(file));
+    //printf("File:\n");
+    //print_hex(file, sizeof(file));
 
     printf("\nResponse:\n");
     print_hex(response, sizeof(response));
-    printf("mov FSR_%02x, #0x%02x\n", file[0x4a], file[0x4b]);
-    printf("mov FSR_%02x, #0x%02x\n", file[0x4d], file[0x4e]);
-    //printf("mov FSR_%02x, #0x%02x\n", file[0x50], file[0x51]);
-    //printf("mov FSR_%02x, #0x%02x\n", file[0x53], file[0x54]);
-    printf("mov FSR_%02x, #0xff/00\n", file[0x56]);
-    printf("mov FSR_%02x, #0xff/00\n", file[0x59]);
-    printf("mov FSR_%02x, #0xff/00\n", file[0x5c]);
-    printf("mov FSR_%02x, #0xff/00\n", file[0x5f]);
+    //printf("mov FSR_%02x, #0x%02x\n", file[0xa3], file[0xa4]);
+    printf("SDL: %02x   SDH: %02x\n", file[0x75], file[0x78]);
     printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
-    usleep(1000000);
+
+    uint8_t cmp[] = {0xfd, 0x9a, 0xd1, 0x42, 0xf6, 0x20, 0xcc, 0x51, 0xd3, 0xc6, 0xec, 0x47, 0x77, 0x31, 0x71, 0x01};
+    int matches = 0;
+    for (i=0; i<sizeof(cmp); i++) {
+        if (response[i+1] == cmp[i])
+            matches++;
+    }
+    if (matches > 10) {
+        printf("Got a match!\n");
+        exit(0);
+    }
+    for (i=0; i<sizeof(response); i++) {
+        if (response[i] != 0xff)
+            break;
+    }
+    if (i >= sizeof(response)) {
+        printf("Got no response at all!\n");
+        return -1;
+    }
 
     return 0;
 }
@@ -334,7 +399,7 @@ static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
     else {
         val = 0;
         run = 0;
-        for (; !val && run<24576-512; run++) {
+        for (; !val; run++) {
             s = rand();
             val = interesting_one_cycle(state, run, s);
 
@@ -470,6 +535,35 @@ static int do_validate_file(struct sd_state *state) {
 
 
 
+static int do_debugger(struct sd_state *state, char *filename) {
+    uint8_t response[560];
+    uint8_t bfr[6];
+    uint8_t cmd;
+
+    memset(response, 0, sizeof(response));
+    if (load_and_enter_debugger(state, filename))
+        return 1;
+    printf("Loaded debugger\n");
+
+    cmd = 1;
+	cmd = (cmd&0x3f)|0x40;
+	bfr[0] = cmd;
+	bfr[1] = 0;
+	bfr[2] = 0;
+	bfr[3] = 0;
+	bfr[4] = 0;
+	bfr[5] = (crc7(bfr, 5)<<1)|1;
+
+    xmit_mmc_cmd(state, bfr, sizeof(bfr));
+    sleep(1);
+    rcvr_mmc_cmd(state, response, sizeof(response));
+    printf("Second-tier response (0x%02x):\n", response[0]);
+    print_hex(response+1, sizeof(response)-1);
+
+    return 0;
+}
+
+
 static int do_execute_file(struct sd_state *state,
                            int run,
                            int seed,
@@ -484,15 +578,8 @@ static int do_execute_file(struct sd_state *state,
     srand(seed);
 
     // Load in the specified file
-    {
-        int fd = open(filename, O_RDONLY);
-        if (-1 == fd) {
-            perror("Unable to load rom file");
-            return 1;
-        }
-        read(fd, file, 512);
-        close(fd);
-    }
+    if (read_file(filename, file, 512))
+        return 1;
 
     printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
 
@@ -508,20 +595,20 @@ static int do_execute_file(struct sd_state *state,
 
     calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
-    //rcvr_mmc_dat1_start(state, 256);
+    rcvr_mmc_cmd(state, response, 1);
+    printf("Immediate code-load response: %02x\n", response[0]);
+
+    for (tries=0; tries<2; tries++) {
+        if (-1 != rcvr_mmc_cmd_start(state, 50))
+            break;
+        usleep(50000);
+    }
     rcvr_mmc_cmd(state, response, sizeof(response));
 
     printf("Result of factory mode: %d\n", ret);
 
-    printf("File:\n");
-    print_hex(file, sizeof(file));
-    static int romfile;
-    if (!romfile)
-        romfile = open("ax211rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    write(romfile, response, 512);
-
-    printf("\nResponse:\n");
-    print_hex(response, sizeof(response));
+    printf("\nResponse (%02x):\n", response[0]);
+    print_hex(response+1, sizeof(response)-1);
 
     return 0;
 }
@@ -534,13 +621,14 @@ static int print_help(char *name) {
         "\t%s -c         Boots normally and prints CSD/CID\n"
         "\t%s -e         Tries banging on ECC\n"
         "\t%s -e         Validate the firmware file\n"
+        "\t%s -d [dbgr]  Enters debugger, launching the specified filename\n"
         "\t%s -x [file]  Enters factory mode and executes the file\n"
         "Options:\n"
         " -s [seed]    Specifies a seed for random values\n"
         " -r [file]    Writes the specified ROM file to NAND\n"
         " -l [loop]    Execute the loop with run=[loop]\n"
         ,
-        name, name, name, name, name);
+        name, name, name, name, name, name);
     return 0;
 }
 
@@ -559,6 +647,7 @@ int main(int argc, char **argv) {
     int rom_file_written = 0;
 
     char prog_filename[512];
+    char debugger_filename[512];
 
 
 	srand(time(NULL));
@@ -568,7 +657,7 @@ int main(int argc, char **argv) {
         return 1;
 
 
-	while ((ch = getopt(argc, argv, "vefchs:r:l:x:")) != -1) {
+	while ((ch = getopt(argc, argv, "vefchs:r:l:x:d:")) != -1) {
 		switch(ch) {
 		case 'c':
 			mode = 1;
@@ -606,6 +695,11 @@ int main(int argc, char **argv) {
             mode = 4;
             break;
 
+        case 'd':
+            strncpy(debugger_filename, optarg, sizeof(debugger_filename)-1);
+            mode = 5;
+            break;
+
 		case 'h':
         default:
             print_help(argv[0]);
@@ -631,6 +725,8 @@ int main(int argc, char **argv) {
         ret = do_validate_file(state);
     else if (mode == 4)
         ret = do_execute_file(state, loop, seed, prog_filename);
+    else if (mode == 5)
+        ret = do_debugger(state, debugger_filename);
 
 	//sd_deinit(&state);
 
