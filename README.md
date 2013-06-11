@@ -42,9 +42,9 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      80  |       |  SP   |  DPL  |  DPH  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     88  |       |       |       |       |       |       |       |       |
+     88  | SDOS  |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     90  |       |       |       |       |       |       |       |       |
+     90  |       |       |       | SDBL  | SDBH  |       | SDDL  | SDDH  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -66,7 +66,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E0  |  ACC  |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     E8  |       |       |       |       |       |       |       |       |
+     E8  |       |       |       | SDDIR |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F0  |   B   |       |       |       |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -80,6 +80,30 @@ DPL:    Data Pointer (low)
 DPH:    Data Pointer (high)
 
 IE:     Interrupt enable
+        | Axxx 4321 |
+            A = all interrupts (0 - all interrupts disabled)
+            4 - enable/disable interrupt 4
+            3 - enable/disable interrupt 3
+            2 - enable/disable interrupt 2
+            1 - enable/disable interrupt 1
+
+SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear to be extra bits that determine what sort of transfer it is.
+        | ?ABC ???S |
+            S = "start transfer" bit
+            ABC = ? (maybe indicates 'CMD' bit?)
+
+SDBL:   SD transfer bytes (low byte), minus one
+
+SDBH:   SD transfer bytes (high byte), minus one
+        | ???? ???h |
+            h = "high bit of address"
+
+SDDL:   SD transfer source address (low byte), divided by 4
+
+SDDH:   SD transfer source address (high byte), divided by 4
+        | xxxx xDDD | (Only lower three bits are used)
+
+SDDIR:  SD pin direction registers
 
 PORT1:  GPIO for the NAND port.
 
