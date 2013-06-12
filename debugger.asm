@@ -154,7 +154,7 @@ main_loop:
         lcall   inc_ram_values
 
         mov     DPTR, #0x0100
-        mov     A, 0x8c
+        mov     A, 0x8d
         movx    @DPTR, A
 
         inc     DPTR

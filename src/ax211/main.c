@@ -548,10 +548,9 @@ static int do_validate_file(struct sd_state *state) {
 static int boot_cycle(struct sd_state *state, int seed) {
     uint8_t response[7];
     uint8_t bfr[6];
-    int cmd;
+    static int cmd;
     static int try;
-    cmd = 0;
-	cmd = (cmd&0x3f)|0x40;
+	cmd = ((++cmd)&0x3f)|0x40;
 	bfr[0] = cmd;
 	bfr[1] = try++;
 	bfr[2] = try++;

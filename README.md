@@ -43,7 +43,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      80  |       |  SP   |  DPL  |  DPH  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     88  | SDOS  | SDI3  | SDI2  | SDI1  | SDI0  |       |       |       |
+     88  | SDOS  | SDI4  | SDI3  | SDI2  | SDI1  | SDCMD |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      90  | SDSM  |       |       | SDBL  | SDBH  |       | SDDL  | SDDH  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -93,7 +93,9 @@ SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear
             S = "start transfer" bit
             ABC = ? (maybe indicates 'CMD' bit?)
 
-SDI0..3: Register values R1..R4 from the SD command
+SDI1..4: Register values R1..R4 from the SD command
+
+SDCMD:  The number of the command that was sent (without start bit).  E.g. if the first byte was 0x42, then SDCMD would equal 0x02.
 
 SDSM:   SD state machine state.
         | ???? AA?X |
