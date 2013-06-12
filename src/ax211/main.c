@@ -259,7 +259,8 @@ static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
 
 
 static int load_and_enter_debugger(struct sd_state *state, char *filename) {
-    uint8_t response[560];
+    uint8_t response1[6];
+    uint8_t response2[7];
     uint8_t file[512+(4*sizeof(uint16_t))];
     memset(file, 0xff, sizeof(file));
 
@@ -283,8 +284,8 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             return 1;
 
         xmit_mmc_dat4(state, file, sizeof(file));
-        rcvr_mmc_cmd(state, response, 1);
-        printf("Immediate code-load response: %02x\n", response[0]);
+        rcvr_mmc_cmd(state, response1, 1);
+        printf("Immediate code-load response: %02x\n", response1[0]);
 
         for (tries=0; tries<2; tries++) {
             if (-1 != rcvr_mmc_cmd_start(state, 50))
@@ -292,16 +293,26 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             usleep(50000);
         }
         // Couldn't enter debugger, try again
-        if (-1 != rcvr_mmc_cmd_start(state, 50))
+        if (-1 == rcvr_mmc_cmd_start(state, 32768))
             continue;
 
-        rcvr_mmc_cmd(state, response, sizeof(response));
+        rcvr_mmc_cmd(state, response1, sizeof(response1));
+
+        printf("Waiting for response 2...\n");
+        if (-1 == rcvr_mmc_cmd_start(state, 32768))
+            continue;
+        printf("Got it\n");
+        rcvr_mmc_cmd(state, response2, sizeof(response2));
 
         printf("Result of factory mode: %d\n", ret);
-        printf("\nResponse (%02x):\n", response[0]);
-        if (response[0] != 0x3f)
-            continue;
-        print_hex(response+1, sizeof(response)-1);
+        printf("\nResponse1 (%02x):\n", response1[0]);
+        print_hex(response1+1, sizeof(response1)-1);
+
+        printf("\nResponse2:\n");
+        print_hex(response2, sizeof(response2));
+
+//        if (response[0] != 0x3f)
+//            continue;
         break;
     }
     return 0;
@@ -534,18 +545,11 @@ static int do_validate_file(struct sd_state *state) {
 }
 
 
-
-static int do_debugger(struct sd_state *state, char *filename) {
-    uint8_t response[560];
+static int boot_cycle(struct sd_state *state, int seed) {
+    uint8_t response[7];
     uint8_t bfr[6];
-    uint8_t cmd;
-
-    memset(response, 0, sizeof(response));
-    if (load_and_enter_debugger(state, filename))
-        return 1;
-    printf("Loaded debugger\n");
-
-    cmd = 1;
+    int cmd;
+    cmd = 0;
 	cmd = (cmd&0x3f)|0x40;
 	bfr[0] = cmd;
 	bfr[1] = 0;
@@ -554,11 +558,44 @@ static int do_debugger(struct sd_state *state, char *filename) {
 	bfr[4] = 0;
 	bfr[5] = (crc7(bfr, 5)<<1)|1;
 
+    usleep(20000);
     xmit_mmc_cmd(state, bfr, sizeof(bfr));
-    sleep(1);
+    rcvr_mmc_cmd_start(state, 16384);
+    rcvr_mmc_cmd(state, response, sizeof(response));
+    print_hex(response, sizeof(response));
+    return 0;
+}
+
+
+static int do_debugger(struct sd_state *state, char *filename) {
+    uint8_t response[7];
+    uint8_t bfr[6];
+    uint8_t cmd;
+
+    memset(response, 0, sizeof(response));
+    if (load_and_enter_debugger(state, filename))
+        return 1;
+    printf("Loaded debugger\n");
+
+    cmd = 0;
+	cmd = (cmd&0x3f)|0x40;
+	bfr[0] = cmd;
+	bfr[1] = 0;
+	bfr[2] = 0;
+	bfr[3] = 0;
+	bfr[4] = 0;
+	bfr[5] = (crc7(bfr, 5)<<1)|1;
+
+    sleep(2);
+    printf("Sending command...\n");
+    xmit_mmc_cmd(state, bfr, sizeof(bfr));
+    printf("Receiving response...\n");
     rcvr_mmc_cmd(state, response, sizeof(response));
     printf("Second-tier response (0x%02x):\n", response[0]);
     print_hex(response+1, sizeof(response)-1);
+
+    while(1)
+        boot_cycle(state, rand());
 
     return 0;
 }

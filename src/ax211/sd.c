@@ -159,7 +159,7 @@ static int init_port(struct sd_state *state) {
     *eim_get(fpga_w_nand_power) = 1;
 
     gpio_set_value(state->power, SD_ON);
-    usleep(7000);
+    usleep(12000);
     return 0;
 }
 
@@ -303,7 +303,9 @@ int rcvr_mmc_dat1_start(struct sd_state *state, int tries) {
 int rcvr_mmc_cmd_start(struct sd_state *state, int tries) {
     int attempts = 0;
     gpio_set_direction(state->cmd, GPIO_IN);
-    while (attempts < tries && gpio_get_value(state->cmd)) {
+    while (attempts < tries) {
+        if (!gpio_get_value(state->cmd)) 
+            return attempts;
         attempts++;
         CK_L(); CK_H();
         if (!gpio_get_value(state->cmd))

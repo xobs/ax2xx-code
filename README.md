@@ -44,7 +44,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      88  | SDOS  |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     90  |       |       |       | SDBL  | SDBH  |       | SDDL  | SDDH  |
+     90  | SDSM  |       |       | SDBL  | SDBH  |       | SDDL  | SDDH  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -92,6 +92,10 @@ SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear
             S = "start transfer" bit
             ABC = ? (maybe indicates 'CMD' bit?)
 
+SDSM:   SD state machine state.
+        | ???? AA?X |
+            A - If 0, then the state machine is idle
+
 SDBL:   SD transfer bytes (low byte), minus one
 
 SDBH:   SD transfer bytes (high byte), minus one
@@ -113,4 +117,15 @@ B:      Scratch register.  Used for multiply/divide operations.
 
 
 The DPL+DPH combination form the address that's read by the DPTR register.
+
+The contents of the SFRs when the program is first loaded is:
+
+    0c 80 02 00 00 00 00 00  00 22 5b 27 c0 00 00 00
+    02 00 00 00 00 fe 00 00  10 00 00 50 00 00 01 28
+    34 00 00 00 00 00 ec 00  8f 00 00 f1 05 8d e9 fd
+    f0 1f c3 00 00 00 00 00  44 00 00 00 00 00 00 00
+    ff ff ff ef 00 00 00 00  ff ff dd eb 00 00 00 00
+    80 ec 00 00 00 00 00 00  e8 bd bd df 00 00 00 00
+    3f 00 00 00 78 07 00 00  80 00 87 ff 00 00 00 00
+    48 ff 00 2c 00 3f 00 00  14 fe ff ff 00 00 00 00
 
