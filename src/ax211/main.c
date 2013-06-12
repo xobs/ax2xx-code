@@ -549,16 +549,20 @@ static int boot_cycle(struct sd_state *state, int seed) {
     uint8_t response[7];
     uint8_t bfr[6];
     int cmd;
+    static int try;
     cmd = 0;
 	cmd = (cmd&0x3f)|0x40;
 	bfr[0] = cmd;
-	bfr[1] = 0;
-	bfr[2] = 0;
-	bfr[3] = 0;
-	bfr[4] = 0;
+	bfr[1] = try++;
+	bfr[2] = try++;
+	bfr[3] = try++;
+	bfr[4] = try++;
 	bfr[5] = (crc7(bfr, 5)<<1)|1;
 
-    usleep(20000);
+    //usleep(20000);
+    printf("\nSending command: ");
+    print_header(bfr);
+    printf("\n");
     xmit_mmc_cmd(state, bfr, sizeof(bfr));
     rcvr_mmc_cmd_start(state, 16384);
     rcvr_mmc_cmd(state, response, sizeof(response));
@@ -568,31 +572,10 @@ static int boot_cycle(struct sd_state *state, int seed) {
 
 
 static int do_debugger(struct sd_state *state, char *filename) {
-    uint8_t response[7];
-    uint8_t bfr[6];
-    uint8_t cmd;
 
-    memset(response, 0, sizeof(response));
     if (load_and_enter_debugger(state, filename))
         return 1;
     printf("Loaded debugger\n");
-
-    cmd = 0;
-	cmd = (cmd&0x3f)|0x40;
-	bfr[0] = cmd;
-	bfr[1] = 0;
-	bfr[2] = 0;
-	bfr[3] = 0;
-	bfr[4] = 0;
-	bfr[5] = (crc7(bfr, 5)<<1)|1;
-
-    sleep(2);
-    printf("Sending command...\n");
-    xmit_mmc_cmd(state, bfr, sizeof(bfr));
-    printf("Receiving response...\n");
-    rcvr_mmc_cmd(state, response, sizeof(response));
-    printf("Second-tier response (0x%02x):\n", response[0]);
-    print_hex(response+1, sizeof(response)-1);
 
     while(1)
         boot_cycle(state, rand());

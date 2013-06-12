@@ -147,10 +147,27 @@ main_loop:
 ;        mov     R3, #0xff
 ;        lcall   memsetx
 
+        lcall   pause_a_while
+
         mov     DPTR, #0x0100
         mov     R0, #0x10
         lcall   inc_ram_values
-        lcall   pause_a_while
+
+        mov     DPTR, #0x0100
+        mov     A, 0x8c
+        movx    @DPTR, A
+
+        inc     DPTR
+        mov     A, 0x8b
+        movx    @DPTR, A
+
+        inc     DPTR
+        mov     A, 0x8a
+        movx    @DPTR, A
+
+        inc     DPTR
+        mov     A, 0x89
+        movx    @DPTR, A
 
         xrl     0x40, #0xff
         mov     PORT1, 0x40    ; Turn LEDs off
