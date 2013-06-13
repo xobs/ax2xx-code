@@ -284,6 +284,7 @@ int dbg_main(struct sd_state *sd) {
         wordexp_t cmdline;
         int i;
         int ret = -ENOENT;
+        int exp_res;
 
         // EOF (or ^D)
         if (!cmd) {
@@ -295,7 +296,32 @@ int dbg_main(struct sd_state *sd) {
             continue;
 
         add_history(cmd);
-        wordexp(cmd, &cmdline, 0);
+        exp_res = wordexp(cmd, &cmdline, 0);
+        if (exp_res == WRDE_BADCHAR) {
+            printf("Illegal character found in command\n");
+            continue;
+        }
+        else if (exp_res == WRDE_BADVAL) {
+            printf("Undefined variable in commaind\n");
+            continue;
+        }
+        else if (exp_res == WRDE_CMDSUB) {
+            printf("Did command substitution, and we weren't supposed to\n");
+            continue;
+        }
+        else if (exp_res == WRDE_NOSPACE) {
+            printf("Out of memory\n");
+            continue;
+        }
+        else if (exp_res == WRDE_SYNTAX) {
+            printf("Syntax error in command\n");
+            continue;
+        }
+        else if (exp_res) {
+            printf("Unrecognized error occurred in command parsing\n");
+            continue;
+        }
+
 
         for (i=0; debug_commands[i].func; i++)
             if (!strcmp(cmdline.we_wordv[0], debug_commands[i].name))
