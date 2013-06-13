@@ -60,6 +60,7 @@
 #define R1_ADDRESS_ERROR    (1<<5)  // A misaligned address, which did not match the block length was used in the command.
 #define R1_PARAMETER        (1<<6)  // The command's argument (e.g. address, block length) was out of the allowed range for this card.
 
+int dbg_main(struct sd_state *state);
 
 static int load_rom_file(struct sd_state *state, char *file) {
     int i;
@@ -298,21 +299,28 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
 
         rcvr_mmc_cmd(state, response1, sizeof(response1));
 
+        /*
         printf("Waiting for response 2...\n");
         if (-1 == rcvr_mmc_cmd_start(state, 32768))
             continue;
         printf("Got it\n");
         rcvr_mmc_cmd(state, response2, sizeof(response2));
+        */
 
         printf("Result of factory mode: %d\n", ret);
         printf("\nResponse1 (%02x):\n", response1[0]);
         print_hex(response1+1, sizeof(response1)-1);
 
+        /*
         printf("\nResponse2:\n");
         print_hex(response2, sizeof(response2));
 
-//        if (response[0] != 0x3f)
-//            continue;
+        if (response2[0] != 0x00) {
+            printf("Wanted 0x00, got 0x%02x\n", response2[0]);
+        //    continue;
+        }
+        */
+
         break;
     }
     return 0;
@@ -548,9 +556,10 @@ static int do_validate_file(struct sd_state *state) {
 static int boot_cycle(struct sd_state *state, int seed) {
     uint8_t response[7];
     uint8_t bfr[6];
-    static int cmd;
+    static int cmd = 61;
     static int try;
-	cmd = ((++cmd)&0x3f)|0x40;
+    cmd++;
+	cmd = ((cmd)&0x3f)|0x40;
 	bfr[0] = cmd;
 	bfr[1] = try++;
 	bfr[2] = try++;
@@ -576,10 +585,8 @@ static int do_debugger(struct sd_state *state, char *filename) {
         return 1;
     printf("Loaded debugger\n");
 
-    while(1)
-        boot_cycle(state, rand());
 
-    return 0;
+    return dbg_main(state);
 }
 
 

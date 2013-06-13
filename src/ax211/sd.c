@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <time.h>
 #include <strings.h>
 #include <string.h>
 #include <arpa/inet.h>
@@ -97,7 +98,7 @@ struct sd_state {
 
 #define	CS_H()		gpio_set_value(state->cs, CS_DESEL) /* Set MMC CS "high" */
 #define	CS_L()		gpio_set_value(state->cs, CS_SEL) /* Set MMC CS "low" */
-#define	CK_H()		gpio_set_value(state->clk, 1); usleep(1) /* Set MMC CLK "high" */
+#define	CK_H()		gpio_set_value(state->clk, 1) /* Set MMC CLK "high" */
 #define	CK_L()		gpio_set_value(state->clk, 0) /* Set MMC CLK "low" */
 #define	DI_H()		gpio_set_value(state->mosi, 1) /* Set MMC DI "high" */
 #define	DI_L()		gpio_set_value(state->mosi, 0) /* Set MMC DI "low" */
@@ -172,6 +173,12 @@ int sd_toggle_clk(struct sd_state *state, int times) {
 }
 
 
+static int nsleep(int nsec) {
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = nsec;
+    return nanosleep(&ts, NULL);
+}
 
 
 /*-----------------------------------------------------------------------*/
@@ -186,7 +193,6 @@ void xmit_spi (
 )
 {
 	uint8_t d;
-	uint8_t r;
 
     gpio_set_direction(state->mosi, GPIO_OUT);
 
@@ -194,39 +200,29 @@ void xmit_spi (
 		d = *buff++;	/* Get a byte to be sent */
 
 		if (d & 0x80) DI_H(); else DI_L();	/* bit7 */
-		r = 0;	 if (DO) r++;	/* bit7 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x40) DI_H(); else DI_L();	/* bit6 */
-		r <<= 1; if (DO) r++;	/* bit6 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x20) DI_H(); else DI_L();	/* bit5 */
-		r <<= 1; if (DO) r++;	/* bit5 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x10) DI_H(); else DI_L();	/* bit4 */
-		r <<= 1; if (DO) r++;	/* bit4 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x08) DI_H(); else DI_L();	/* bit3 */
-		r <<= 1; if (DO) r++;	/* bit3 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x04) DI_H(); else DI_L();	/* bit2 */
-		r <<= 1; if (DO) r++;	/* bit2 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x02) DI_H(); else DI_L();	/* bit1 */
-		r <<= 1; if (DO) r++;	/* bit1 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
 		if (d & 0x01) DI_H(); else DI_L();	/* bit0 */
-		r <<= 1; if (DO) r++;	/* bit0 */
-		CK_H(); CK_L();
+		nsleep(5); CK_H(); nsleep(5); CK_L();
 
-		if (ibuff)
-			*ibuff++ = r;	/* Store a received byte */
 	} while (--bc);
 }
 
@@ -307,7 +303,10 @@ int rcvr_mmc_cmd_start(struct sd_state *state, int tries) {
         if (!gpio_get_value(state->cmd)) 
             return attempts;
         attempts++;
-        CK_L(); CK_H();
+        CK_L();
+        usleep(1);
+        CK_H();
+        usleep(1);
         if (!gpio_get_value(state->cmd))
             return attempts;
     }
@@ -396,13 +395,18 @@ void rcvr_mmc_dat1 (
 /*-----------------------------------------------------------------------*/
 
 static int gpio_really_get_value(int gpio) {
-    int states[3];
-    states[0] = gpio_get_value(gpio);
-    states[1] = gpio_get_value(gpio);
-    states[2] = gpio_get_value(gpio);
-    if (states[0] != states[1] || states[1] != states[2])
-        fprintf(stderr, "GPIO state has changed! %d/%d/%d\n", states[0], states[1], states[2]);
-    return states[2];
+    int tries = 1;
+    int try;
+    int states[tries];
+    for (try=0; try<tries; try++) {
+        states[try] = gpio_get_value(gpio);
+        if (try) {
+            if (states[try-1] != states[try]) {
+                fprintf(stderr, "GPIO state has changed! Try %d %d -> %d\n", try, states[try-1], states[try]);
+            }
+        }
+    }
+    return states[tries-1];
 }
 
 void rcvr_mmc_cmd (
