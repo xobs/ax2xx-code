@@ -134,3 +134,18 @@ The contents of the SFRs when the program is first loaded is:
     3f 00 00 00 78 07 00 00  80 00 87 ff 00 00 00 00
     48 ff 00 2c 00 3f 00 00  14 fe ff ff 00 00 00 00
 
+
+Using the Interactive Debugger
+==============================
+
+The ax211 binary now includes an interactive debugger.  To run it, you must
+supply an executable binary.  Commands on the host will get transmitted to
+the card, and the responses will get read back.
+
+The wire protocol is simply a re-purposed SD interface running over two
+wires.  Commands go out the CMD line, and responses come back on the CMD
+line.  You must know how many bytes the response will take, and stop
+wiggling the clock line once you have reached that many bytes.  Be sure to
+add two bytes, one for the start byte and one for the CRC7.
+
+For information on available commands, run "help".
