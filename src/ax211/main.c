@@ -42,7 +42,6 @@ static int print_header(uint8_t *bfr) {
 }
 
 
-
 static int send_cmdX(struct sd_state *state, 
 		uint8_t cmd,
 		uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4,
@@ -405,6 +404,9 @@ int main(int argc, char **argv) {
     if (!state)
         return 1;
 
+    printf("FPGA hardware v%d.%d\n",
+            eim_get(fpga_r_ddr3_v_major),
+            eim_get(fpga_r_ddr3_v_minor));
 
 	while ((ch = getopt(argc, argv, "vfchs:l:x:d:")) != -1) {
 		switch(ch) {
