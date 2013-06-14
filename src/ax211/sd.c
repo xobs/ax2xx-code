@@ -188,7 +188,6 @@ static int nsleep(int nsec) {
 void xmit_spi (
 	struct sd_state *state,
 	const uint8_t *buff,	/* Data to be sent */
-	uint8_t *ibuff,
 	uint32_t bc		/* Number of bytes to send */
 )
 {
@@ -227,7 +226,7 @@ void xmit_spi (
 }
 
 void xmit_mmc_cmd(struct sd_state *state, const uint8_t *buff, uint32_t bc) {
-    xmit_spi(state, buff, NULL, bc);
+    xmit_spi(state, buff, bc);
     gpio_set_direction(state->cmd, GPIO_IN);
 }
 
@@ -588,9 +587,9 @@ int xmit_datablock (	/* 1:OK, 0:Failed */
 	if (!wait_ready(state)) return 0;
 
 	d[0] = token;
-	xmit_spi(state, d, NULL, 1);				/* Xmit a token */
+	xmit_spi(state, d, 1);				/* Xmit a token */
 	if (token != 0xFD) {		/* Is it data token? */
-		xmit_spi(state, buff, NULL, 512);	/* Xmit the 512 byte data block to MMC */
+		xmit_spi(state, buff, 512);	/* Xmit the 512 byte data block to MMC */
 		rcvr_spi(state, d, 2);			/* Xmit dummy CRC (0xFF,0xFF) */
 		rcvr_spi(state, d, 1);			/* Receive data response */
 		if ((d[0] & 0x1F) != 0x05)	/* If not accepted, return with error */
@@ -636,7 +635,7 @@ uint8_t send_cmd (		/* Returns command response (bit7==1:Send failed)*/
 	if (cmd == CMD8) n = 0x87;		/* (valid CRC for CMD8(0x1AA)) */
 	buf[5] = n;
 
-	xmit_spi(state, buf, NULL, 6);
+	xmit_spi(state, buf, 6);
 
 	/* Receive command response */
 	if (cmd == CMD12) rcvr_spi(state, &d, 1);	/* Skip a stuff byte when stop reading */
@@ -1001,15 +1000,6 @@ sector (int32_t) */
 
 
 
-/*-----------------------------------------------------------------------*/
-/* This function is defined for only project compatibility               */
-
-void disk_timerproc (void)
-{
-	/* Nothing to do */
-}
-
-
 int print_hex(uint8_t *block, int count) {
         int offset;
         int byte;
@@ -1027,211 +1017,36 @@ int print_hex(uint8_t *block, int count) {
 
                 printf("  |");
                 for (byte=0; byte<16 && byte+offset<count; byte++)
-                        printf("%c", isprint(block[offset+byte])?block[offset+byte]:'.');
+                        printf("%c", isprint(block[offset+byte]) ?
+                                        block[offset+byte] :
+                                        '.');
                 printf("|\n");
         }
         return 0;
 }
 
 
-int sd_cmd60_command(struct sd_state *state, void *bfr) {
-	uint8_t *bytes = bfr;
-        int result = -1;
-        int tries;
-	uint8_t bigbuf[22];
-	memset(bigbuf, 0, sizeof(bigbuf));
 
-	uint16_t crc = crc16(bytes, 14);
-        bytes[14] = htons(crc);
-        bytes[15] = htons(crc)>>8;
-
-	memcpy(bigbuf, bytes, 16);
+int sd_txrx(struct sd_state *state,
+                void *bfr,
+                int count,
+                uint8_t *outbfr, int outsize) {
+    int result = -1;
+    int tries;
 
 	sd_end(state);
 	if (!sd_begin(state)) return 0xFF;
-	xmit_spi(state, bigbuf, NULL, sizeof(bigbuf));
+	xmit_spi(state, bfr, count);
 
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-                uint8_t val;
+    /* Wait for the card to respond, positive or negative */
+    for (tries=0; tries<16; tries++) {
+        uint8_t val;
 		rcvr_spi(state, &val, 1);
 		if (val != 0xff) {
 			result = val;
 			break;
 		}
-        }
-	if (result != -1) {
-                printf("CMD %3d  After %2d tries:  ", bytes[1], tries);
-		uint8_t bfr[16];
-		bfr[0] = result;
-		rcvr_spi(state, bfr+1, 15);
-		print_hex(bfr, 16);
-	}
-	else
-		printf("CMD %d  No response\n", bytes[1]);
-        sd_end(state);
-        return result;
-}
-
-
-int sd_some_bfr(struct sd_state *state, void *bfr, int count) {
-	uint8_t *bytes = bfr;
-        int result = -1;
-        int tries;
-	uint8_t hdr[5];
-
-	sd_end(state);
-	if (!sd_begin(state)) return 0xFF;
-	memset(hdr, 0, sizeof(hdr));
-	hdr[0] = 0x40 | 60;
-	xmit_spi(state, bfr, NULL, count);
-
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-                uint8_t val;
-		rcvr_spi(state, &val, 1);
-		if (val != 0xff) {
-			result = val;
-			break;
-		}
-        }
-#if 1
-	if (result != -1) {
-                printf("CMD %3d  After %2d tries:  ", bytes[0]&0x3f, tries);
-		uint8_t bfr[16];
-		bfr[0] = result;
-		rcvr_spi(state, bfr+1, 15);
-		print_hex(bfr, 16);
-	}
-	else
-		printf("CMD %d  No response\n", bytes[1]);
-#else
-	printf("%d %d", bytes[0], bytes[1]);
-	if (result != -1) {
-		int i;
-		uint8_t bfr[16];
-		bfr[0] = result;
-		rcvr_spi(state, bfr+1, 15);
-		for (i=0; i<sizeof(bfr); i++)
-			printf(" %d", bfr[i]);
-	}
-	else {
-		int i;
-		for (i=0; i<16; i++)
-			printf(" -1");
-	}
-	printf("\n");
-#endif
-
-        sd_end(state);
-        return result;
-}
-
-
-int sd_write_file(struct sd_state *state,
-		uint8_t *bfr1, int bfr1_sz,
-		uint8_t *bfr2, int bfr2_sz) {
-        int result = -1;
-        int tries;
-	uint8_t token;
-	uint8_t ibuff[bfr2_sz];
-
-	sd_end(state);
-	if (!sd_begin(state)) return 0xFF;
-	xmit_spi(state, bfr1, NULL, bfr1_sz);
-
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-		rcvr_spi(state, &token, 1);
-		if (token != 0xff) {
-			result = token;
-			break;
-		}
-        }
-	printf("Recieve file response after %d tries: %02x\n", tries, result&0xff);
-	//rcvr_spi(state, &token, 1);
-	//rcvr_spi(state, &token, 1);
-	//rcvr_spi(state, &token, 1);
-	//rcvr_spi(state, &token, 1);
-
-	token = 0xFC;
-	xmit_spi(state, &token, NULL, sizeof(token));
-
-	xmit_spi(state, bfr2, ibuff, bfr2_sz);
-	printf("Buffer during receive:\n");
-	print_hex(ibuff, bfr2_sz);
-
-	token = 0xFE;
-	xmit_spi(state, &token, NULL, sizeof(token));
-
-	result = -1;
-        for (tries=0; tries<16; tries++) {
-                uint8_t val;
-		rcvr_spi(state, &val, 1);
-		if (val != 0xff) {
-			result = val;
-			break;
-		}
-        }
-	printf("Xmit, then get file response after %d tries: %02x\n", tries, result&0xff);
-
-        sd_end(state);
-        return result;
-}
-
-
-#if 0
-// Prints send/receive buffer
-int sd_dump_rom(struct sd_state *state, void *bfr, int count, uint8_t *outbfr, int outsize) {
-        int result = -1;
-        int tries;
-
-//	sd_end(state);
-//	if (!sd_begin(state)) return 0xFF;
-	xmit_spi(state, bfr, outbfr, count);
-
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-                uint8_t val;
-		rcvr_spi(state, &val, 1);
-		if (val != 0xff) {
-			result = val;
-			if (tries>1 && !(result&4)) printf("Tries:%d ", tries);
-			break;
-		}
-        }
-
-/*
-	if (result != -1) {
-		outbfr[0] = result;
-		if (outsize > 1)
-			rcvr_spi(state, outbfr+1, outsize-1);
-	}
-*/
-
-//        sd_end(state);
-        return result;
-}
-#endif
-
-
-int sd_dump_rom(struct sd_state *state, void *bfr, int count, uint8_t *outbfr, int outsize) {
-        int result = -1;
-        int tries;
-
-	sd_end(state);
-	if (!sd_begin(state)) return 0xFF;
-	xmit_spi(state, bfr, NULL, count);
-
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-                uint8_t val;
-		rcvr_spi(state, &val, 1);
-		if (val != 0xff) {
-			result = val;
-			break;
-		}
-        }
+    }
 
 	if (result != -1 && outbfr && outsize) {
 		outbfr[0] = result;
@@ -1243,32 +1058,6 @@ int sd_dump_rom(struct sd_state *state, void *bfr, int count, uint8_t *outbfr, i
 	return result;
 }
 
-
-int sd_blind_xfer(struct sd_state *state, void *bfr, int count, uint8_t *data, uint8_t *outbfr, int outsize) {
-    int result = -1;
-    int tries;
-
-    if (bfr && count) {
-        xmit_spi(state, bfr, NULL, count);
-
-        /* Wait for the card to respond, positive or negative */
-        for (tries=0; tries<16; tries++) {
-            uint8_t val;
-            rcvr_spi(state, &val, 1);
-            if (val != 0xff) {
-                result = val;
-                break;
-            }
-        }
-
-        if (result == -1)
-            return result;
-    }
-
-    if (data && outsize)
-        xmit_spi(state, data, outbfr, outsize);
-	return result;
-}
 
 int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
     uint8_t bfr[6];
@@ -1309,15 +1098,124 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
     rcvr_mmc_cmd(state, response, sizeof(response));
     printf("Sending CMD%d {0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}:\n",
             bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
-    printf("Reset response after %d ticks: {0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}\n",
-            i, response[0], response[1], response[2], response[3], response[4], response[5]);
+    printf("Reset response after %d ticks: "
+           "{0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}\n",
+            i,
+            response[0], response[1], response[2],
+            response[3], response[4], response[5]);
     if (((crc7(response, 5)<<1)|1) == response[5]) {
         printf("CRC7 matches!  %02x\n", response[5]);
     }
     else {
-        printf("CRC7 differs.  Got %02x, calculated %02x\n", response[5], ((crc7(response, 5)<<1)|1)); 
+        printf("CRC7 differs.  Got %02x, calculated %02x\n",
+               response[5], ((crc7(response, 5)<<1)|1)); 
     }
     return response[0];
 }
 
+
+int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
+    uint8_t sub_bfr[4][size/4];
+    uint16_t crcs[4];
+    int i;
+    int bit;
+    memset(sub_bfr, 0, sizeof(sub_bfr));
+    // De-interleave bfr into four arrays.
+    // Every four bytes of bfr get turned into one byte of buffer.
+    for (i=0; i<size; ) {
+        for (bit=7; bit>=0; bit-=2) {
+            sub_bfr[0][i/4] |= (!!(bfr[i]&0x80))<<(bit-0);
+            sub_bfr[0][i/4] |= (!!(bfr[i]&0x08))<<(bit-1);
+
+            sub_bfr[1][i/4] |= (!!(bfr[i]&0x40))<<(bit-0);
+            sub_bfr[1][i/4] |= (!!(bfr[i]&0x04))<<(bit-1);
+
+            sub_bfr[2][i/4] |= (!!(bfr[i]&0x20))<<(bit-0);
+            sub_bfr[2][i/4] |= (!!(bfr[i]&0x02))<<(bit-1);
+
+            sub_bfr[3][i/4] |= (!!(bfr[i]&0x10))<<(bit-0);
+            sub_bfr[3][i/4] |= (!!(bfr[i]&0x01))<<(bit-1);
+
+            i++;
+        }
+    }
+
+    for (i=0; i<4; i++)
+        crcs[i] = crc16(sub_bfr[i], size/4);
+
+    crc_bfr[0] =
+            ((!!((crcs[0]>>8)&0x80))<<7)
+          | ((!!((crcs[1]>>8)&0x80))<<6)
+          | ((!!((crcs[2]>>8)&0x80))<<5)
+          | ((!!((crcs[3]>>8)&0x80))<<4)
+          | ((!!((crcs[0]>>8)&0x40))<<3)
+          | ((!!((crcs[1]>>8)&0x40))<<2)
+          | ((!!((crcs[2]>>8)&0x40))<<1)
+          | ((!!((crcs[3]>>8)&0x40))<<0);
+    crc_bfr[1] =
+            ((!!((crcs[0]>>8)&0x20))<<7)
+          | ((!!((crcs[1]>>8)&0x20))<<6)
+          | ((!!((crcs[2]>>8)&0x20))<<5)
+          | ((!!((crcs[3]>>8)&0x20))<<4)
+          | ((!!((crcs[0]>>8)&0x10))<<3)
+          | ((!!((crcs[1]>>8)&0x10))<<2)
+          | ((!!((crcs[2]>>8)&0x10))<<1)
+          | ((!!((crcs[3]>>8)&0x10))<<0);
+    crc_bfr[2] =
+            ((!!((crcs[0]>>8)&0x8))<<7)
+          | ((!!((crcs[1]>>8)&0x8))<<6)
+          | ((!!((crcs[2]>>8)&0x8))<<5)
+          | ((!!((crcs[3]>>8)&0x8))<<4)
+          | ((!!((crcs[0]>>8)&0x4))<<3)
+          | ((!!((crcs[1]>>8)&0x4))<<2)
+          | ((!!((crcs[2]>>8)&0x4))<<1)
+          | ((!!((crcs[3]>>8)&0x4))<<0);
+    crc_bfr[3] =
+            ((!!((crcs[0]>>8)&0x2))<<7)
+          | ((!!((crcs[1]>>8)&0x2))<<6)
+          | ((!!((crcs[2]>>8)&0x2))<<5)
+          | ((!!((crcs[3]>>8)&0x2))<<4)
+          | ((!!((crcs[0]>>8)&0x1))<<3)
+          | ((!!((crcs[1]>>8)&0x1))<<2)
+          | ((!!((crcs[2]>>8)&0x1))<<1)
+          | ((!!((crcs[3]>>8)&0x1))<<0);
+
+    crc_bfr[4] =
+            ((!!((crcs[0])&0x80))<<7)
+          | ((!!((crcs[1])&0x80))<<6)
+          | ((!!((crcs[2])&0x80))<<5)
+          | ((!!((crcs[3])&0x80))<<4)
+          | ((!!((crcs[0])&0x40))<<3)
+          | ((!!((crcs[1])&0x40))<<2)
+          | ((!!((crcs[2])&0x40))<<1)
+          | ((!!((crcs[3])&0x40))<<0);
+    crc_bfr[5] =
+            ((!!((crcs[0])&0x20))<<7)
+          | ((!!((crcs[1])&0x20))<<6)
+          | ((!!((crcs[2])&0x20))<<5)
+          | ((!!((crcs[3])&0x20))<<4)
+          | ((!!((crcs[0])&0x10))<<3)
+          | ((!!((crcs[1])&0x10))<<2)
+          | ((!!((crcs[2])&0x10))<<1)
+          | ((!!((crcs[3])&0x10))<<0);
+    crc_bfr[6] =
+            ((!!((crcs[0])&0x8))<<7)
+          | ((!!((crcs[1])&0x8))<<6)
+          | ((!!((crcs[2])&0x8))<<5)
+          | ((!!((crcs[3])&0x8))<<4)
+          | ((!!((crcs[0])&0x4))<<3)
+          | ((!!((crcs[1])&0x4))<<2)
+          | ((!!((crcs[2])&0x4))<<1)
+          | ((!!((crcs[3])&0x4))<<0);
+    crc_bfr[7] =
+            ((!!((crcs[0])&0x2))<<7)
+          | ((!!((crcs[1])&0x2))<<6)
+          | ((!!((crcs[2])&0x2))<<5)
+          | ((!!((crcs[3])&0x2))<<4)
+          | ((!!((crcs[0])&0x1))<<3)
+          | ((!!((crcs[1])&0x1))<<2)
+          | ((!!((crcs[2])&0x1))<<1)
+          | ((!!((crcs[3])&0x1))<<0);
+    return 0;
+}
 

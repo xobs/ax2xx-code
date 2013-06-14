@@ -14,33 +14,6 @@
 #include "eim.h"
 #include "crc-16.h"
 
-/* CHUMBY_BEND - 89
- * IR_DETECT - 102
- */
-
-/* Pin connection:
- * SD  | MX233
- * 9   | 0
- * 1   | 1
- * 2   | 2
- * 3   | GND
- * DET | 3
- * 4   | [power switch]
- * 5   | 4
- * 6   | GND
- * 7   | 7
- * 8   | NC (was: 6)
- */
-
-/** Definitions for Kovan test jig */
-/*
-#define CS_PIN 50
-#define MISO_PIN 62
-#define CLK_PIN 46
-#define MOSI_PIN 48
-#define POWER_PIN 55
-*/
-
 /** Definitions for Novena EIM interface */
 #define CS_PIN    GPIO_IS_EIM | 3
 #define MISO_PIN  GPIO_IS_EIM | 0
@@ -83,7 +56,8 @@ static int load_rom_file(struct sd_state *state, char *file) {
 
 
 static int print_header(uint8_t *bfr) {
-	printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ", bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
+	printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
+            bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
 	return 0;
 }
 
@@ -105,7 +79,7 @@ static int send_cmdX(struct sd_state *state,
 	bfr[3] = a3;
 	bfr[4] = a4;
 	bfr[5] = (crc7(bfr, 5)<<1)|1;
-	result = sd_dump_rom(state, bfr, sizeof(bfr), out_bfr, print_size);
+	result = sd_txrx(state, bfr, sizeof(bfr), out_bfr, print_size);
 	if (result!=-1 && !(result&R1_ILLEGAL_COMMAND)) {
 		out_bfr[0] = result;
 		printf("Run %-4d  ", run);
@@ -153,122 +127,15 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
 }
 
 
-static int calculate_mmc_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
-    uint8_t sub_bfr[4][size/4];
-    uint16_t crcs[4];
-    int i;
-    int bit;
-    memset(sub_bfr, 0, sizeof(sub_bfr));
-    // De-interleave bfr into four arrays.
-    // Every four bytes of bfr get turned into one byte of buffer.
-    for (i=0; i<size; ) {
-        for (bit=7; bit>=0; bit-=2) {
-            sub_bfr[0][i/4] |= (!!(bfr[i]&0x80))<<(bit-0);
-            sub_bfr[0][i/4] |= (!!(bfr[i]&0x08))<<(bit-1);
-
-            sub_bfr[1][i/4] |= (!!(bfr[i]&0x40))<<(bit-0);
-            sub_bfr[1][i/4] |= (!!(bfr[i]&0x04))<<(bit-1);
-
-            sub_bfr[2][i/4] |= (!!(bfr[i]&0x20))<<(bit-0);
-            sub_bfr[2][i/4] |= (!!(bfr[i]&0x02))<<(bit-1);
-
-            sub_bfr[3][i/4] |= (!!(bfr[i]&0x10))<<(bit-0);
-            sub_bfr[3][i/4] |= (!!(bfr[i]&0x01))<<(bit-1);
-
-            i++;
-        }
-    }
-
-    for (i=0; i<4; i++)
-        crcs[i] = crc16(sub_bfr[i], size/4);
-
-    crc_bfr[0] = 
-            ((!!((crcs[0]>>8)&0x80))<<7)
-          | ((!!((crcs[1]>>8)&0x80))<<6)
-          | ((!!((crcs[2]>>8)&0x80))<<5)
-          | ((!!((crcs[3]>>8)&0x80))<<4)
-          | ((!!((crcs[0]>>8)&0x40))<<3)
-          | ((!!((crcs[1]>>8)&0x40))<<2)
-          | ((!!((crcs[2]>>8)&0x40))<<1)
-          | ((!!((crcs[3]>>8)&0x40))<<0);
-    crc_bfr[1] = 
-            ((!!((crcs[0]>>8)&0x20))<<7)
-          | ((!!((crcs[1]>>8)&0x20))<<6)
-          | ((!!((crcs[2]>>8)&0x20))<<5)
-          | ((!!((crcs[3]>>8)&0x20))<<4)
-          | ((!!((crcs[0]>>8)&0x10))<<3)
-          | ((!!((crcs[1]>>8)&0x10))<<2)
-          | ((!!((crcs[2]>>8)&0x10))<<1)
-          | ((!!((crcs[3]>>8)&0x10))<<0);
-    crc_bfr[2] = 
-            ((!!((crcs[0]>>8)&0x8))<<7)
-          | ((!!((crcs[1]>>8)&0x8))<<6)
-          | ((!!((crcs[2]>>8)&0x8))<<5)
-          | ((!!((crcs[3]>>8)&0x8))<<4)
-          | ((!!((crcs[0]>>8)&0x4))<<3)
-          | ((!!((crcs[1]>>8)&0x4))<<2)
-          | ((!!((crcs[2]>>8)&0x4))<<1)
-          | ((!!((crcs[3]>>8)&0x4))<<0);
-    crc_bfr[3] = 
-            ((!!((crcs[0]>>8)&0x2))<<7)
-          | ((!!((crcs[1]>>8)&0x2))<<6)
-          | ((!!((crcs[2]>>8)&0x2))<<5)
-          | ((!!((crcs[3]>>8)&0x2))<<4)
-          | ((!!((crcs[0]>>8)&0x1))<<3)
-          | ((!!((crcs[1]>>8)&0x1))<<2)
-          | ((!!((crcs[2]>>8)&0x1))<<1)
-          | ((!!((crcs[3]>>8)&0x1))<<0);
-
-    crc_bfr[4] = 
-            ((!!((crcs[0])&0x80))<<7)
-          | ((!!((crcs[1])&0x80))<<6)
-          | ((!!((crcs[2])&0x80))<<5)
-          | ((!!((crcs[3])&0x80))<<4)
-          | ((!!((crcs[0])&0x40))<<3)
-          | ((!!((crcs[1])&0x40))<<2)
-          | ((!!((crcs[2])&0x40))<<1)
-          | ((!!((crcs[3])&0x40))<<0);
-    crc_bfr[5] = 
-            ((!!((crcs[0])&0x20))<<7)
-          | ((!!((crcs[1])&0x20))<<6)
-          | ((!!((crcs[2])&0x20))<<5)
-          | ((!!((crcs[3])&0x20))<<4)
-          | ((!!((crcs[0])&0x10))<<3)
-          | ((!!((crcs[1])&0x10))<<2)
-          | ((!!((crcs[2])&0x10))<<1)
-          | ((!!((crcs[3])&0x10))<<0);
-    crc_bfr[6] = 
-            ((!!((crcs[0])&0x8))<<7)
-          | ((!!((crcs[1])&0x8))<<6)
-          | ((!!((crcs[2])&0x8))<<5)
-          | ((!!((crcs[3])&0x8))<<4)
-          | ((!!((crcs[0])&0x4))<<3)
-          | ((!!((crcs[1])&0x4))<<2)
-          | ((!!((crcs[2])&0x4))<<1)
-          | ((!!((crcs[3])&0x4))<<0);
-    crc_bfr[7] = 
-            ((!!((crcs[0])&0x2))<<7)
-          | ((!!((crcs[1])&0x2))<<6)
-          | ((!!((crcs[2])&0x2))<<5)
-          | ((!!((crcs[3])&0x2))<<4)
-          | ((!!((crcs[0])&0x1))<<3)
-          | ((!!((crcs[1])&0x1))<<2)
-          | ((!!((crcs[2])&0x1))<<1)
-          | ((!!((crcs[3])&0x1))<<0);
-    return 0;
-}
-
-
 static int load_and_enter_debugger(struct sd_state *state, char *filename) {
     uint8_t response1[6];
-    uint8_t response2[7];
     uint8_t file[512+(4*sizeof(uint16_t))];
     memset(file, 0xff, sizeof(file));
 
     // Load in the debugger stub
     if (read_file(filename, file, 512))
         return 1;
-    calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
+    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
 
     while(1) {
         int ret;
@@ -278,7 +145,8 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         for (tries=0; ret<0 && tries<10; tries++) {
             ret = sd_enter_factory_mode(state, 0);
             if (-1 == ret)
-                printf("Couldn't enter factory mode, trying again (%d/10)\n", tries+1);
+                printf("Couldn't enter factory mode, trying again (%d/10)\n",
+                        tries+1);
         }
         // Couldn't enter factory mode, abort
         if (-1 == ret)
@@ -299,27 +167,9 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
 
         rcvr_mmc_cmd(state, response1, sizeof(response1));
 
-        /*
-        printf("Waiting for response 2...\n");
-        if (-1 == rcvr_mmc_cmd_start(state, 32768))
-            continue;
-        printf("Got it\n");
-        rcvr_mmc_cmd(state, response2, sizeof(response2));
-        */
-
         printf("Result of factory mode: %d\n", ret);
         printf("\nResponse1 (%02x):\n", response1[0]);
         print_hex(response1+1, sizeof(response1)-1);
-
-        /*
-        printf("\nResponse2:\n");
-        print_hex(response2, sizeof(response2));
-
-        if (response2[0] != 0x00) {
-            printf("Wanted 0x00, got 0x%02x\n", response2[0]);
-        //    continue;
-        }
-        */
 
         break;
     }
@@ -357,7 +207,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     if (!rom_fd)
         rom_fd = open("ax211-rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
 
-    calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
+    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
     rcvr_mmc_cmd(state, response, 2);
     for (i=0; i<3; i++) {
@@ -371,16 +221,13 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
 
     printf("Result of factory mode: %d\n", ret);
 
-    //printf("File:\n");
-    //print_hex(file, sizeof(file));
-
     printf("\nResponse:\n");
     print_hex(response, sizeof(response));
-    //printf("mov FSR_%02x, #0x%02x\n", file[0xa3], file[0xa4]);
     printf("SDL: %02x   SDH: %02x\n", file[0x75], file[0x78]);
     printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
 
-    uint8_t cmp[] = {0xfd, 0x9a, 0xd1, 0x42, 0xf6, 0x20, 0xcc, 0x51, 0xd3, 0xc6, 0xec, 0x47, 0x77, 0x31, 0x71, 0x01};
+    uint8_t cmp[] = {0xfd, 0x9a, 0xd1, 0x42, 0xf6, 0x20, 0xcc, 0x51,
+                     0xd3, 0xc6, 0xec, 0x47, 0x77, 0x31, 0x71, 0x01};
     int matches = 0;
     for (i=0; i<sizeof(cmp); i++) {
         if (response[i+1] == cmp[i])
@@ -407,10 +254,6 @@ static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
     int val;
     int s;
 
-    // Reset the card...
-    //sd_reset(state, 1);
-    //blind_reset(state, NULL, NULL, 0);
-
     if (seed)
         val = interesting_one_cycle(state, loop?*loop:0, *seed);
     else if (loop)
@@ -424,12 +267,14 @@ static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
 
             // If we get an interesting value, try running it again.
             if (val>0) {
-                printf("Potentially interesting.  Trying seed %d again...\n", s);
+                printf("Potentially interesting.  "
+                       "Trying seed %d again...\n", s);
                 val = interesting_one_cycle(state, run, s);
 
                 // If we get an interesting value, try running it again.
                 if (val>0) {
-                    printf("Still potentially interesting.  Trying seed %d one last time...\n", s);
+                    printf("Still potentially interesting.  "
+                           "Trying seed %d one last time...\n", s);
                     val = interesting_one_cycle(state, run, s);
                 }
             }
@@ -449,8 +294,6 @@ static int do_one_ecc_knock(struct sd_state *state, int seed, int run) {
     int i;
     int addrs;
     uint8_t ecc_region[16] = {
-        //0xc1, 0x77, 0xdb, 0xf5, 0xda, 0x4a, 0x4c, 0xfe,
-        //0xd6, 0x1c, 0x02, 0xec, 0x9f, 0x8a, 0xca, 0xa1,
         0x7f, 0xa1, 0x8e, 0xbe, 0x74, 0x9d, 0x5f, 0x07,
         0xd7, 0xf6, 0xd1, 0x81, 0x12, 0x59, 0x5e, 0xf9
     };
@@ -553,32 +396,6 @@ static int do_validate_file(struct sd_state *state) {
 }
 
 
-static int boot_cycle(struct sd_state *state, int seed) {
-    uint8_t response[7];
-    uint8_t bfr[6];
-    static int cmd = 61;
-    static int try;
-    cmd++;
-	cmd = ((cmd)&0x3f)|0x40;
-	bfr[0] = cmd;
-	bfr[1] = try++;
-	bfr[2] = try++;
-	bfr[3] = try++;
-	bfr[4] = try++;
-	bfr[5] = (crc7(bfr, 5)<<1)|1;
-
-    //usleep(20000);
-    printf("\nSending command: ");
-    print_header(bfr);
-    printf("\n");
-    xmit_mmc_cmd(state, bfr, sizeof(bfr));
-    rcvr_mmc_cmd_start(state, 16384);
-    rcvr_mmc_cmd(state, response, sizeof(response));
-    print_hex(response, sizeof(response));
-    return 0;
-}
-
-
 static int do_debugger(struct sd_state *state, char *filename) {
 
     if (load_and_enter_debugger(state, filename))
@@ -614,12 +431,13 @@ static int do_execute_file(struct sd_state *state,
     for (tries=0; ret<0 && tries<10; tries++) {
         ret = sd_enter_factory_mode(state, run);
         if (-1 == ret)
-            printf("Couldn't enter factory mode, trying again (%d/10)\n", tries+1);
+            printf("Couldn't enter factory mode, trying again (%d/10)\n",
+                    tries+1);
     }
     if (-1 == ret)
         return -1;
 
-    calculate_mmc_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
+    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
     rcvr_mmc_cmd(state, response, 1);
     printf("Immediate code-load response: %02x\n", response[0]);
@@ -678,7 +496,8 @@ int main(int argc, char **argv) {
 
 	srand(time(NULL));
 
-	state = sd_init(MISO_PIN, MOSI_PIN, CLK_PIN, CS_PIN, DAT1_PIN, DAT2_PIN, POWER_PIN);
+	state = sd_init(MISO_PIN, MOSI_PIN, CLK_PIN, CS_PIN,
+                    DAT1_PIN, DAT2_PIN, POWER_PIN);
     if (!state)
         return 1;
 
