@@ -132,7 +132,8 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             return 1;
 
         xmit_mmc_dat4(state, file, sizeof(file));
-        rcvr_mmc_cmd(state, response1, 1);
+        sd_toggle_clk(state, 2);
+        xmit_mmc_cmd(state, response1, 1);
         printf("Immediate code-load response: %02x\n", response1[0]);
 
         for (tries=0; tries<2; tries++) {
@@ -141,8 +142,10 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             usleep(50000);
         }
         // Couldn't enter debugger, try again
-        if (-1 == rcvr_mmc_cmd_start(state, 32))
+        if (-1 == rcvr_mmc_cmd_start(state, 32)) {
+            printf("Never got start-of-data command from debugger\n");
             continue;
+        }
 
         rcvr_mmc_cmd(state, response1, sizeof(response1));
 
@@ -150,8 +153,11 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         printf("\nResponse1 (%02x):\n", response1[0]);
         print_hex(response1+1, sizeof(response1)-1);
 
-        if (response1[0] != 0 || response1[1] != 0x0a)
+        if (response1[0] != 0 || response1[1] != 0x0a) {
+            printf("Expected 0x00 0x0a, got 0x%02x 0x%02x\n",
+                    response1[0], response1[1]);
             continue;
+        }
 
         break;
     }

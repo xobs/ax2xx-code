@@ -154,13 +154,13 @@ static int init_port(struct sd_state *state) {
     gpio_set_value(state->dat2, 0);
 
     eim_set(fpga_w_nand_pwr_ctl, 0);
-    usleep(250000);
+    usleep(140000);
     CS_H();
 
     eim_set(fpga_w_nand_pwr_ctl, 1);
 
     gpio_set_value(state->power, SD_ON);
-    usleep(5000);
+    usleep(8000);
     return 0;
 }
 
