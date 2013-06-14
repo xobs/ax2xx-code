@@ -224,7 +224,7 @@ static int prep_eim(void) {
 
 static uint16_t *ranges[8];
 
-uint16_t *eim_get(enum eim_type type) {
+static uint16_t *eim_open(enum eim_type type) {
 	static int fd;
     int range = (type>>16)&7;
 
@@ -246,13 +246,21 @@ uint16_t *eim_get(enum eim_type type) {
 		return NULL;
 	}
 
-	return eim_get(type);
+	return eim_open(type);
+}
+
+uint16_t eim_get(enum eim_type type) {
+    return *eim_open(type);
+}
+
+uint16_t eim_set(enum eim_type type, uint16_t value) {
+    uint16_t *ptr = eim_open(type);
+    uint16_t old = *ptr;
+    *ptr = value;
+    return old;
 }
 
 int eim_set_direction(int gpio, int is_output) {
-	volatile uint16_t *mem = eim_get(fpga_w_gpioa_dir);
-	if (!mem)
-		return -1;
 	gpio &= ~GPIO_IS_EIM;
 	if (is_output)
 		cached_dir |=  (1<<gpio);
@@ -260,15 +268,12 @@ int eim_set_direction(int gpio, int is_output) {
 		// Clear direction
 		cached_dir &= ~(1<<gpio);
 
-	*mem = cached_dir;
+	eim_set(fpga_w_gpioa_dir, cached_dir);
 	return 0;
 }
 
 
 int eim_set_value(int gpio, int value) {
-	volatile uint16_t *mem = eim_get(fpga_w_gpioa_dout);
-	if (!mem)
-		return -1;
 	gpio &= ~GPIO_IS_EIM;
 	if (value) {
         if ((cached_dout & (1<<gpio)))
@@ -280,15 +285,13 @@ int eim_set_value(int gpio, int value) {
             return 0;
 		cached_dout &= ~(1<<gpio);
     }
-	*mem = cached_dout;
+    eim_set(fpga_w_gpioa_dout, cached_dout);
 	return 0;
 }
 
 int eim_get_value(int gpio) {
-	volatile uint16_t *mem = eim_get(fpga_r_gpioa_din);
-	if (!mem)
-		return -1;
+	volatile uint16_t mem = eim_get(fpga_r_gpioa_din);
 	gpio &= ~GPIO_IS_EIM;
-	return (*mem >> gpio)&1;
+	return (mem >> gpio)&1;
 }
 

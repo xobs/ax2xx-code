@@ -35,30 +35,6 @@
 
 int dbg_main(struct sd_state *state);
 
-static int load_rom_file(struct sd_state *state, char *file) {
-    int i;
-    int fd;
-
-    fd = open(file, O_RDONLY);
-    if (-1 == fd) {
-        perror("Couldn't open ROM file");
-        return 1;
-    }
-
-    for (i=0; i<65536; i+=2) {
-        read(fd, eim_get(fpga_romulator_base+i), 2);
-    }
-
-    printf("FPGA hardware V%d.%d\n",
-            *eim_get(fpga_r_ddr3_v_major),
-            *eim_get(fpga_r_ddr3_v_minor));
-
-    close(fd);
-    return 0;
-}
-
-
-
 static int print_header(uint8_t *bfr) {
 	printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
             bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
@@ -113,8 +89,8 @@ static int drain_nand_addrs(struct sd_state *state) {
     int val;
     int addrs;
     for (i=0; addrs; i++) {
-        val = *eim_get(fpga_r_nand_adr_hi);
-        addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
+        val = eim_get(fpga_r_nand_adr_hi);
+        addrs = eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
     }
     return val;
 }
@@ -174,6 +150,9 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         printf("Result of factory mode: %d\n", ret);
         printf("\nResponse1 (%02x):\n", response1[0]);
         print_hex(response1+1, sizeof(response1)-1);
+
+        if (response1[0] != 0 || response1[1] != 0x0a)
+            continue;
 
         break;
     }
@@ -294,87 +273,12 @@ static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
     return val;
 }
 
-static int do_one_ecc_knock(struct sd_state *state, int seed, int run) {
-    int i;
-    int addrs;
-    uint8_t ecc_region[16] = {
-        0x7f, 0xa1, 0x8e, 0xbe, 0x74, 0x9d, 0x5f, 0x07,
-        0xd7, 0xf6, 0xd1, 0x81, 0x12, 0x59, 0x5e, 0xf9
-    };
-
-    printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
-    srand(seed);
-
-    for (i=0; i<sizeof(ecc_region); i++)
-        ecc_region[i] = rand();
-    ecc_region[2] &= ~0x0f;
-    ecc_region[2] |= 0x0e;
-    memcpy(eim_get(fpga_romulator_base+0x200), ecc_region, sizeof(ecc_region));
-
-    printf("ECC data: ");
-    print_hex(ecc_region, sizeof(ecc_region));
-
-    // Drain address data
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
-    printf("Pre-draining %d addresses\n", addrs);
-    drain_nand_addrs(state);
-
-    printf("Resetting...\n");
-    sd_reset(state, 1);
-    printf("Sending CMD9...\n");
-    send_cmdX(state, 9, 0, 0, 0, 0, 32);
-    usleep(50000);
-
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
-    printf("Draining %d addresses\n", addrs);
-    drain_nand_addrs(state);
-
-    usleep(50000);
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
-    if (addrs) {
-        printf("No workey.  There are %d addrs left\n", addrs);
-        return 0;
-    }
-    else {
-        printf("Works well!\n");
-        return 1;
-    }
-}
-
-static int do_bang_on_ecc(struct sd_state *state) {
-    int run;
-    int seed;
-    int i;
-    int val;
-
-    for (i=0; i<0x200; i+=2)
-        *eim_get(fpga_romulator_base+i) = 0xfe80;
-
-    run = 0;
-    while (1) {
-        seed = rand();
-        val = do_one_ecc_knock(state, seed, run);
-        if (val) {
-            printf("Got a match.  Trying again...\n");
-            val = do_one_ecc_knock(state, seed, run);
-            if (val) {
-                printf("Yay!  Confirmed.\n");
-                return val;
-            }
-            printf("Nope.  Continuing.\n");
-        }
-        run++;
-    }
-
-    return val;
-}
-
 
 static int do_validate_file(struct sd_state *state) {
     int addrs;
 
     // Drain address data
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
+    addrs = eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
     printf("Pre-draining %d addresses\n", addrs);
     drain_nand_addrs(state);
 
@@ -382,12 +286,12 @@ static int do_validate_file(struct sd_state *state) {
     send_cmdX(state, 9, 0, 0, 0, 0, 32);
     usleep(900000);
 
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
+    addrs = eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
     printf("Draining %d addresses\n", addrs);
     drain_nand_addrs(state);
 
     usleep(50000);
-    addrs = *eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
+    addrs = eim_get(fpga_r_nand_adr_stat)&eim_nand_adr_bits;
     if (addrs) {
         printf("Invalid firmware.  There are %d addrs left\n", addrs);
     }
@@ -467,16 +371,14 @@ static int print_help(char *name) {
         "Modes:\n"
         "\t%s -f         Runs a fuzz test in factory mode\n"
         "\t%s -c         Boots normally and prints CSD/CID\n"
-        "\t%s -e         Tries banging on ECC\n"
-        "\t%s -e         Validate the firmware file\n"
+        "\t%s -v         Validate the firmware file\n"
         "\t%s -d [dbgr]  Enters debugger, launching the specified filename\n"
         "\t%s -x [file]  Enters factory mode and executes the file\n"
         "Options:\n"
         " -s [seed]    Specifies a seed for random values\n"
-        " -r [file]    Writes the specified ROM file to NAND\n"
         " -l [loop]    Execute the loop with run=[loop]\n"
         ,
-        name, name, name, name, name, name);
+        name, name, name, name, name);
     return 0;
 }
 
@@ -492,8 +394,6 @@ int main(int argc, char **argv) {
     int loop;
     int have_loop = 0;
 
-    int rom_file_written = 0;
-
     char prog_filename[512];
     char debugger_filename[512];
 
@@ -506,7 +406,7 @@ int main(int argc, char **argv) {
         return 1;
 
 
-	while ((ch = getopt(argc, argv, "vefchs:r:l:x:d:")) != -1) {
+	while ((ch = getopt(argc, argv, "vfchs:l:x:d:")) != -1) {
 		switch(ch) {
 		case 'c':
 			mode = 1;
@@ -514,10 +414,6 @@ int main(int argc, char **argv) {
 
         case 'f':
             mode = 0;
-            break;
-
-        case 'e':
-            mode = 2;
             break;
 
         case 's':
@@ -528,11 +424,6 @@ int main(int argc, char **argv) {
         case 'l':
             have_loop = 1;
             loop = strtoul(optarg, NULL, 0);
-            break;
-
-        case 'r':
-            load_rom_file(state, optarg);
-            rom_file_written=1;
             break;
 
         case 'v':
@@ -557,9 +448,6 @@ int main(int argc, char **argv) {
 		}
 	}
 
-    if (!rom_file_written)
-        load_rom_file(state, "bot64k-ecc-d.bin");
-
     if (mode == -1)
         ret = print_help(argv[0]);
     else if (mode == 0)
@@ -568,8 +456,6 @@ int main(int argc, char **argv) {
                                  have_loop?&loop:NULL);
     else if (mode == 1)
 		ret = do_get_csd_cid(state);
-    else if (mode == 2)
-        ret = do_bang_on_ecc(state);
     else if (mode == 3)
         ret = do_validate_file(state);
     else if (mode == 4)

@@ -130,6 +130,8 @@ static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
     int tries;
 
     memset(ret, 0, sizeof(ret));
+    memset(out, 0, outsize);
+
     code = (code&0x3f)|0x40;
     bfr[0] = code;
     bfr[1] = args[0];
