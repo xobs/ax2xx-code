@@ -58,6 +58,7 @@ reset_vector:                            ; CODE XREF: ROM:2900
                 push    ACC             ; Accumulator
                 reti
 ; ---------------------------------------------------------------------------
+.org 0x2932
                 mov     IEN0, #0      ; Interrupt Enable Register 0
                 mov     SP, #0x80     ; Stack Pointer
                 acall   setup_outputs
