@@ -49,6 +49,10 @@ static int load_rom_file(struct sd_state *state, char *file) {
         read(fd, eim_get(fpga_romulator_base+i), 2);
     }
 
+    printf("FPGA hardware V%d.%d\n",
+            *eim_get(fpga_r_ddr3_v_major),
+            *eim_get(fpga_r_ddr3_v_minor));
+
     close(fd);
     return 0;
 }
