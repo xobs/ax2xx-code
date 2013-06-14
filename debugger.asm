@@ -17,6 +17,11 @@
 .equ    SDDIR, 0xEB
 .equ    SDSM, 0x90
 
+.equ    SDI1, 0x8C
+.equ    SDI2, 0x8B
+.equ    SDI3, 0x8A
+.equ    SDI4, 0x89
+
 .equ    RESET, 0
 .equ    PORT1, 0xF6
 
@@ -26,65 +31,35 @@
 
 .org 0x2900
 
-; This gets called from an interrupt.
-start:
-        sjmp    reset_vector
-
-set_ram_values:
-        movx    @DPTR, A
-        inc     DPTR
-        djnz    R0, set_ram_values
-        ret
-
-set_isr:
-        mov     A, #0x02
-        movx    @DPTR, A
-
-        inc     DPTR
-        mov     A, #0x29
-        movx    @DPTR, A
-
-        inc     DPTR
-        mov     A, #0x3f
-        movx    @DPTR, A
-
-        ret
-
-
-wait_for_packet:
-        mov     A, SDSM
-        anl     A, #0xC
-        jnz     wait_for_packet
-        ret
-
+; This gets called from the ROM.
 ; ---------------------------------------------------------------------------
-; This gets called from an interrupt context.  Manipulate the stack so that
-; when we return from intterupt, code execution will continue at an address
-; immediately following (i.e. 0x2932).
+; This gets called from an interrupt context, from within ROM.  We want to
+; manipulate the stack so that when we return from intterupt, code execution
+; will continue at an address immediately following this code section.
 reset_vector:
         anl     0x80, #0xFE
         orl     0x80, #2
 
-        pop     PSW             ; Program Status Word
-        pop     ACC             ; Accumulator
+        pop     PSW             ; Remove previous return addresses
+        pop     ACC             ; from the stack
 
-        mov     A, #0x32
-        push    ACC             ; Accumulator
-        mov     A, #0x29
-        push    ACC             ; Accumulator
+        mov     A, #0x13        ; Add the new return
+        push    ACC             ; address to the stack, so that when
+        mov     A, #0x29        ; we reti, we end up at our
+        push    ACC             ; "start" address.
 
-        reti
+        reti                    ; Return from interrupt, ending up at 0x2913
+
 ; ---------------------------------------------------------------------------
-
-.org 0x2932
-prog_entry:
-        mov     IEN, #0         ; Interrupt Enable Register 0
-        mov     SP, #0x80       ; Stack Pointer
-        mov     SDDIR, #0xff
+.org 0x2913
+start:
+        mov     IEN, #0         ; Disable interrupts
+        mov     SP, #0x80       ; Reset stack pointer
+        mov     SDDIR, #0xff    ; Prevent the SD card from writing 0x00
         acall   setup
         ajmp    xmit_response   ; Send a "hello" packet
 
-.org 0x293f
+.org 0x2920
 ; ---------------------------------------------------------------------------
 ; SD interrupt handler.  Called from an interrupt context.
 sdi_isr:
@@ -99,13 +74,13 @@ sdi_isr:
         clr     0x24.3
 
         lcall   wait_for_packet
-        mov     0x31, SDCMD      ;SD incoming command
-        mov     0x20, 0x8C
-        mov     0x21, 0x8B
-        mov     0x22, 0x8A
-        mov     0x23, 0x89
+        mov     0x31, SDCMD     ; Copy the incoming SD packet
+        mov     0x20, SDI1      ; to an area of memory commonly used
+        mov     0x21, SDI2      ; by the SD transmission engine.  Copy the
+        mov     0x22, SDI3      ; incoming packet here as part of an echo-back
+        mov     0x23, SDI4      ; program.
 
-        orl     SDSM, #1
+        orl     SDSM, #1        ; Kick the SD state machine (what does this do?)
 
 exit_sdi_isr:
         pop     PSW
@@ -113,12 +88,39 @@ exit_sdi_isr:
         pop     DPH
         pop     0xD2
         pop     ACC
-
-        setb    SD_WAITING.1
+        setb    SD_WAITING.1    ; Indicate we have a command waiting
         reti
+; ---------------------------------------------------------------------------
+
+
+; Point the ISR stored in DPTR to address 0x293f
+; DPTR [in]: Address of the ISR to set
+set_isr:
+        mov     A, #0x02
+        movx    @DPTR, A
+
+        inc     DPTR
+        mov     A, #0x29
+        movx    @DPTR, A
+
+        inc     DPTR
+        mov     A, #0x20
+        movx    @DPTR, A
+
+        ret
+
+; Wait for an SD packet to completely transfer
+wait_for_packet:
+        mov     A, SDSM
+        anl     A, #0xC
+        jnz     wait_for_packet
+        ret
+
 
 ; ---------------------------------------------------------------------------
-setup_part_1:
+
+
+setup_sdport:
         mov     0xd1, #0xe8
         orl     0xe9, #1
         nop
@@ -132,7 +134,8 @@ setup_part_1:
         orl     0xe9, #0x80
         ret
 
-setup_part_2:
+reset_sdport:
+        clr     EA
         anl     0x8e, #0xfe
         anl     0x8e, #0xfd
         anl     0x8e, #0xfb
@@ -141,6 +144,7 @@ setup_part_2:
         setb    0x98.3
         mov     IEN, #0x8f
         clr     0x98.3
+        setb    EA
         ret
 
 setup:
@@ -151,6 +155,7 @@ setup:
         lcall   set_isr
         mov     DPTR, #0x0203
         lcall   set_isr
+        acall   setup_sdport
 
         ret
 
@@ -206,10 +211,7 @@ copy_one_byte:
 
         djnz    R4, copy_one_byte
 
-        clr     EA
-        acall   setup_part_1
-        acall   setup_part_2
-        setb    EA
+        acall   reset_sdport
 
         dec     R2
         mov     SDDL, #0x20     ; SD Outgoing Address>>2
@@ -254,10 +256,7 @@ cmd_error:
 
 xmit_response:
         ; Set up the SD pins
-        clr     EA
-        acall   setup_part_1
-        acall   setup_part_2
-        setb    EA
+        acall   reset_sdport
 
         mov     SDDL, #0x74     ; SD Outgoing Address>>2
         mov     SDDH, #0x05     ; SD Outgoing Address
