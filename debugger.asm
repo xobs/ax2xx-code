@@ -70,7 +70,7 @@ sdi_isr:
         push    PSW
         mov     PSW, #8
         mov     0xd2, #0
-        anl     0x8E, #0xFE
+        anl     0x8e, #0xFE
         clr     0x24.3
 
         lcall   wait_for_packet
@@ -194,7 +194,7 @@ cmd_peek:
         mov     R5, #0x01   ; DPH start dest
         mov     R6, #0x00   ; DPL start dest
 
-copy_one_byte:
+peek_copy_one_byte:
         mov     DPH, R0
         mov     DPL, R1
         movx    A, @DPTR
@@ -209,7 +209,7 @@ copy_one_byte:
         mov     R5, DPH
         mov     R6, DPL
 
-        djnz    R4, copy_one_byte
+        djnz    R4, peek_copy_one_byte
 
         acall   reset_sdport
 
@@ -255,14 +255,13 @@ cmd_error:
         sjmp    xmit_response
 
 xmit_response:
-        ; Set up the SD pins
-        acall   reset_sdport
+        acall   reset_sdport    ; Set up the SD pins
 
-        mov     SDDL, #0x74     ; SD Outgoing Address>>2
-        mov     SDDH, #0x05     ; SD Outgoing Address
+        mov     SDDL, #0x74     ; Point the outgoing address at
+        mov     SDDH, #0x05     ; the contents of RAM_0x20..RAM_0x24
 
-        mov     SDBL, #0x03     ; SD Outgoing bytes (low)
-        mov     SDBH, #0        ; SD Outgoing bytes (high)
+        mov     SDBL, #0x03     ; Output four [sic] bytes
+        mov     SDBH, #0        ;
 
         mov     SDOS, #0x1      ; Kick off the transfer
 
