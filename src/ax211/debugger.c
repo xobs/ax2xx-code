@@ -39,6 +39,7 @@ static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_poke(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_jump(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_help(struct dbg_state *dbg, int argc, char **argv);
+static int dbg_do_disasm(struct dbg_state *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
     {
@@ -77,12 +78,49 @@ static struct debug_command debug_commands[] = {
                 "and returns all zeroes.\n",
     },
     {
+        .name = "disasm",
+        .func = dbg_do_disasm,
+        .desc = "Disassemble an area of memory",
+        .help = "Disassemble a number of bytes at the given offset.\n"
+                "Usage: disasm [address] [bytes]\n",
+    },
+    {
         .name = "help",
         .func = dbg_do_help,
         .desc = "Print this help",
     },
     { },
 };
+
+
+
+static int cmd_read_offset_count(struct dbg_state *dbg, int argc, char **argv,
+                                 uint8_t *src_hi, uint8_t *src_lo,
+                                 uint8_t *count) {
+    int src;
+    int cnt;
+    if (argc < 3) {
+        printf("Not enough arguments!  Usage: %s [addr] [count]\n",
+                argv[0]);
+        return -EINVAL;
+    }
+
+    src = strtoul(argv[1], NULL, 0);
+    cnt = strtoul(argv[2], NULL, 0);
+
+    if (cnt <= 0) {
+        printf("Must specify at least 1 byte\n");
+        return -ERANGE;
+    }
+    if (cnt > 256) {
+        printf("Can read at most 255 bytes at a time\n");
+    }
+
+    *count  = cnt;
+    *src_hi = (src>>8)&0xff;
+    *src_lo = (src)&0xff;
+    return 0;
+}
 
 
 static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
@@ -143,37 +181,46 @@ static int dbg_do_null(struct dbg_state *dbg, int argc, char **argv) {
     return 0;
 }
 
+
 static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv) {
-    int src_lo, src_hi, count;
     uint8_t args[4];
+    int count;
+    int ret;
 
-    if (argc < 3) {
-        printf("Not enough arguments!  Usage: %s [addr] [count]\n",
-                argv[0]);
-        return -EINVAL;
-    }
+    ret = cmd_read_offset_count(dbg, argc, argv, &args[0], &args[1], &args[2]);
+    if (ret)
+        return ret;
 
-    src_lo = strtoul(argv[1], NULL, 0);
-    count  = strtoul(argv[2], NULL, 0);
-
-    if (count <= 0) {
-        printf("Must specify at least 1 byte\n");
-        return -ERANGE;
-    }
-    if (count > 256) {
-        printf("Can read at most 255 bytes at a time\n");
-    }
-
-    src_hi = (src_lo>>8)&0xff;
-    src_lo = (src_lo)&0xff;
-    printf("Reading %d bytes from address 0x%02x%02x\n", count, src_lo, src_hi);
-    args[0] = src_hi;
-    args[1] = src_lo;
-    args[2] = count;
-    uint8_t bfr[count+1];
+    count = args[2];
+    if (!count)
+        count=256;
+    count++;
+    uint8_t bfr[count];
     memset(bfr, 0, sizeof(bfr));
     dbg_txrx(dbg, cmd_peek, args, bfr, sizeof(bfr));
-    print_hex(bfr, sizeof(bfr)-1);
+    print_hex(bfr, count-1);
+
+    return 0;
+}
+
+int disasm_8051(FILE *ofile, uint8_t *bfr, int size, int offset);
+static int dbg_do_disasm(struct dbg_state *dbg, int argc, char **argv) {
+    uint8_t args[4];
+    int count;
+    int ret;
+    ret = cmd_read_offset_count(dbg, argc, argv, &args[0], &args[1], &args[2]);
+    if (ret)
+        return ret;
+
+    count = args[2];
+    if (!count)
+        count=256;
+    count++;
+    uint8_t bfr[count];
+    memset(bfr, 0, sizeof(bfr));
+    dbg_txrx(dbg, cmd_peek, args, bfr, sizeof(bfr));
+
+    disasm_8051(stdout, bfr, count-1, strtoul(argv[1], NULL, 0));
     return 0;
 }
 
