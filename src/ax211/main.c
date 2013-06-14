@@ -162,7 +162,7 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             usleep(50000);
         }
         // Couldn't enter debugger, try again
-        if (-1 == rcvr_mmc_cmd_start(state, 32768))
+        if (-1 == rcvr_mmc_cmd_start(state, 32))
             continue;
 
         rcvr_mmc_cmd(state, response1, sizeof(response1));
