@@ -155,7 +155,6 @@ setup:
         lcall   set_isr
         mov     DPTR, #0x0203
         lcall   set_isr
-        lcall   wait_for_packet ; Ensure SD hardware is idle
         acall   setup_sdport
 
         ret
@@ -176,9 +175,8 @@ not_c04:sjmp    cmd_error
 
 ; Send a 'hello' packet
 cmd_hello:
-        mov     0x31, #22
-        mov     0x20, #0x01
-        mov     0x21, #0x0f
+        mov     0x20, #0x41
+        mov     0x21, #0x1f
         mov     0x22, #0x0f
         mov     0x23, #0x0f
         sjmp    xmit_response

@@ -152,7 +152,7 @@ static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
     bfr[5] = (crc7(bfr, 5)<<1)|1;
 
     xmit_mmc_cmd(dbg->sd, bfr, sizeof(bfr));
-    tries = rcvr_mmc_cmd_start(dbg->sd, 16384);
+    tries = rcvr_mmc_cmd_start(dbg->sd, 32);
     if (tries == -1) {
         printf("Never got start!\n");
         return -1;

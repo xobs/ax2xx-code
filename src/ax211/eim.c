@@ -262,13 +262,20 @@ uint16_t eim_set(enum eim_type type, uint16_t value) {
 
 int eim_set_direction(int gpio, int is_output) {
 	gpio &= ~GPIO_IS_EIM;
-	if (is_output)
+	if (is_output) {
+        if (cached_dir & (1<<gpio))
+            return 0;
 		cached_dir |=  (1<<gpio);
-	else
+    }
+	else {
+        if (!(cached_dir & (1<<gpio)))
+            return 0;
 		// Clear direction
 		cached_dir &= ~(1<<gpio);
+    }
 
 	eim_set(fpga_w_gpioa_dir, cached_dir);
+    usleep(1);
 	return 0;
 }
 
