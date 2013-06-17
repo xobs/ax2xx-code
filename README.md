@@ -151,3 +151,28 @@ wiggling the clock line once you have reached that many bytes.  Be sure to
 add two bytes, one for the start byte and one for the CRC7.
 
 For information on available commands, run "help".
+
+Debugger Internals
+------------------
+
+When the debugger starts up, it dumps a small portion of the AX211's RAM
+and searches for some magical fixup sequences.  These three-byte sequences
+begin with the preamble "0xa5", and are used to overcome some limitations
+of the 8051, namely with respect to reading from internal RAM.
+
+After it performs fixups, the debugger enters into its main loop.  It acts
+as a shell, and gets its commands from the debug_commands[] array.  Each
+element of the debug_commands array is made up of a struct debug_command:
+
+    struct debug_command {
+        char    *name;      // Name of the command
+        char    *desc;      // Brief, one-line description
+        char    *help;      // Multi-line "help" description
+        int (*func)(struct dbg *dbg, int argc, char **argv);
+    };
+
+The func() gets called with a C-style argc and argv, with argv[0] set to
+the command name.  You can call getopt() to process arguments.
+
+Return a negative value upon error.  If possible, return a negative errno
+value, for example -EINVAL or -ENOSPC.
