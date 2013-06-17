@@ -2,6 +2,8 @@
 #include <errno.h>
 #include <wordexp.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <strings.h>
 #include <stdlib.h>
 #include <readline/readline.h>
@@ -40,6 +42,7 @@ static int dbg_do_poke(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_jump(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_help(struct dbg_state *dbg, int argc, char **argv);
 static int dbg_do_disasm(struct dbg_state *dbg, int argc, char **argv);
+static int dbg_do_dump_rom(struct dbg_state *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
     {
@@ -69,6 +72,14 @@ static struct debug_command debug_commands[] = {
         .name = "jump",
         .func = dbg_do_jump,
         .desc = "Jump to an area of memory",
+    },
+    {
+        .name = "dumprom",
+        .func = dbg_do_dump_rom,
+        .desc = "Dump all of ROM to a file",
+        .help = "Dumps all of the AX211's 16 kB to a file.\n"
+                "It is recommended you run this first, as normally "
+                "calling peek() will clobber RAM address 0x200.",
     },
     {
         .name = "null",
@@ -151,6 +162,22 @@ static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
     return 0;
 }
 
+static int dbg_read_ram(struct dbg_state *dbg, uint8_t *buf,
+                        int offset, int count) {
+    while (count>0) {
+        uint8_t args[4];
+        uint8_t out[5];
+        args[0] = (offset>>8)&0xff;
+        args[1] = (offset>>0)&0xff;
+        dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
+        memcpy(buf, out, (count>4?4:count));
+        buf+=4;
+        offset+=4;
+        count-=4;
+    }
+    return 0;
+}
+
 
 
 static int dbg_do_hello(struct dbg_state *dbg, int argc, char **argv) {
@@ -184,23 +211,57 @@ static int dbg_do_null(struct dbg_state *dbg, int argc, char **argv) {
 }
 
 
+static int dbg_do_dump_rom(struct dbg_state *dbg, int argc, char **argv) {
+    uint8_t ram[16384];
+    memset(ram, 0, sizeof(ram));
+
+    if (argc != 2) {
+        printf("Usage: %s [romfile]\n", argv[0]);
+        return 1;
+    }
+
+    int fd = open(argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (-1 == fd) {
+        perror("Unable to open output file");
+        return 2;
+    }
+
+    dbg_read_ram(dbg, ram, 0, sizeof(ram));
+    write(fd, ram, sizeof(ram));
+    close(fd);
+
+    return 0;
+}
+
+
 static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv) {
-    uint8_t args[4];
-    int count;
-    int ret;
+    int src;
+    int cnt;
 
-    ret = cmd_read_offset_count(dbg, argc, argv, &args[0], &args[1], &args[2]);
-    if (ret)
-        return ret;
+    src = strtoul(argv[1], NULL, 0);
+    cnt = strtoul(argv[2], NULL, 0);
 
-    count = args[2];
-    if (!count)
-        count=256;
-    count++;
-    uint8_t bfr[count];
-    memset(bfr, 0, sizeof(bfr));
-    dbg_txrx(dbg, cmd_peek, args, bfr, sizeof(bfr));
-    print_hex(bfr, count-1);
+    if (src > 16384) {
+        printf("AX211 only has 16384 bytes of RAM\n");
+        return -ERANGE;
+    }
+    if ((src+cnt) > 16384) {
+        printf("Attempt to read past end of RAM\n");
+        return -ERANGE;
+    }
+
+    if (cnt < 1) {
+        printf("Can't read negative bytes\n");
+        return -ERANGE;
+    }
+    if (src < 0) {
+        printf("Source address is negative\n");
+        return -ERANGE;
+    }
+
+    uint8_t bfr[cnt+1];
+    dbg_read_ram(dbg, bfr, src, cnt);
+    print_hex(bfr, cnt);
 
     return 0;
 }

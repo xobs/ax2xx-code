@@ -152,7 +152,7 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         if (response[0] != 0 || response[1] != 0x01) {
             printf("Result of factory mode: %d\n", ret);
             print_hex(response, sizeof(response));
-            printf("Expected 0x00 0x01, got 0x%02x 0x%02x\n",
+            printf("Expected 0x00 0x00, got 0x%02x 0x%02x\n",
                     response[0], response[1]);
             continue;
         }

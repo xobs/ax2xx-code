@@ -57,7 +57,7 @@ start:
         mov     SP, #0x80       ; Reset stack pointer
         mov     SDDIR, #0xff    ; Prevent the SD card from writing 0x00
         acall   setup
-        ajmp    xmit_response   ; Send a "hello" packet
+        ajmp    cmd_hello  ; Send a "hello" packet
 
 .org 0x2920
 ; ---------------------------------------------------------------------------
@@ -156,11 +156,6 @@ setup:
         mov     DPTR, #0x0203
         lcall   set_isr
         acall   setup_sdport
-        mov     0x31, 0
-        mov     0x20, #1;#0x58
-        mov     0x21, #0x6f
-        mov     0x22, #0x62
-        mov     0x23, #0x73
 
         ret
 
@@ -169,7 +164,7 @@ main_loop:
         cjne    A, #0x00, not_c00
         sjmp    cmd_null
 not_c00:cjne    A, #0x01, not_c01
-        sjmp    cmd_hello
+        sjmp    cmd_echo
 not_c01:cjne    A, #0x02, not_c02
         sjmp    cmd_peek
 not_c02:cjne    A, #0x03, not_c03
@@ -177,6 +172,15 @@ not_c02:cjne    A, #0x03, not_c03
 not_c03:cjne    A, #0x04, not_c04
         sjmp    cmd_jump
 not_c04:sjmp    cmd_error
+
+; Send a 'hello' packet
+cmd_hello:
+        mov     0x31, #22
+        mov     0x20, #0x01
+        mov     0x21, #0x0f
+        mov     0x22, #0x0f
+        mov     0x23, #0x0f
+        sjmp    xmit_response
 
 ; Send all zeroes
 cmd_null:
@@ -187,47 +191,29 @@ cmd_null:
         sjmp    xmit_response
 
 ; Send an echo back
-cmd_hello:
+cmd_echo:
         sjmp    xmit_response
 
 ; Peek at an area of memory
 cmd_peek:
-        mov     R0, 0x20    ; DPH start src
-        mov     R1, 0x21    ; DPL start src
-        mov     R2, 0x22    ; Number of bytes to copy
-        mov     R4, 0x22    ; Number of bytes left
-        mov     R5, #0x01   ; DPH start dest
-        mov     R6, #0x00   ; DPL start dest
-
-peek_copy_one_byte:
-        mov     DPH, R0
-        mov     DPL, R1
+        mov     DPH, 0x20    ; DPH start src
+        mov     DPL, 0x21    ; DPL start src
         movx    A, @DPTR
+        mov     0x20, A
         inc     DPTR
-        mov     R0, DPH
-        mov     R1, DPL
 
-        mov     DPH, R5
-        mov     DPL, R6
-        movx    @DPTR, A
+        movx    A, @DPTR
+        mov     0x21, A
         inc     DPTR
-        mov     R5, DPH
-        mov     R6, DPL
 
-        djnz    R4, peek_copy_one_byte
+        movx    A, @DPTR
+        mov     0x22, A
+        inc     DPTR
 
-        acall   reset_sdport
+        movx    A, @DPTR
+        mov     0x23, A
 
-        dec     R2
-        mov     SDDL, #0x20     ; SD Outgoing Address>>2
-        mov     SDDH, #0x00     ; SD Outgoing Address
-
-        mov     SDBL, R2        ; SD Outgoing bytes (low)
-        mov     SDBH, #0        ; SD Outgoing bytes (high)
-
-        mov     SDOS, #0x1      ; Kick off the transfer
-
-        sjmp    wait_for_next_command
+        sjmp    xmit_response
 
 ; Poke into an area of memory
 cmd_poke:
