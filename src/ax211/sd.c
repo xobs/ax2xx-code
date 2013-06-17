@@ -1000,29 +1000,34 @@ sector (int32_t) */
 
 
 
-int print_hex(uint8_t *block, int count) {
-        int offset;
-        int byte;
-        for (offset=0; offset<count; offset+=16) {
-		printf("%08x ", offset);
+int print_hex_offset(uint8_t *block, int count, int offset) {
+    int byte;
+    count += offset;
+    block -= offset;
+    for ( ; offset<count; offset+=16) {
+        printf("%08x ", offset);
 
-                for (byte=0; byte<16; byte++) {
-                        if (byte == 8)
-                                printf(" ");
-			if (offset+byte < count)
-				printf(" %02x", block[offset+byte]&0xff);
-			else
-				printf("   ");
-                }
-
-                printf("  |");
-                for (byte=0; byte<16 && byte+offset<count; byte++)
-                        printf("%c", isprint(block[offset+byte]) ?
-                                        block[offset+byte] :
-                                        '.');
-                printf("|\n");
+        for (byte=0; byte<16; byte++) {
+            if (byte == 8)
+                printf(" ");
+            if (offset+byte < count)
+                printf(" %02x", block[offset+byte]&0xff);
+            else
+                printf("   ");
         }
-        return 0;
+
+        printf("  |");
+        for (byte=0; byte<16 && byte+offset<count; byte++)
+            printf("%c", isprint(block[offset+byte]) ?
+                                    block[offset+byte] :
+                                    '.');
+        printf("|\n");
+    }
+    return 0;
+}
+
+int print_hex(uint8_t *block, int count) {
+    return print_hex_offset(block, count, 0);
 }
 
 

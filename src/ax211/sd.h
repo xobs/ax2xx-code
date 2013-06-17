@@ -52,6 +52,7 @@ int sd_txrx(struct sd_state *state, void *bfr, int count, uint8_t *out, int getb
 int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size);
 
 int print_hex(uint8_t *block, int count);
+int print_hex_offset(uint8_t *block, int count, int offset);
 
 
 void xmit_spi (
