@@ -212,11 +212,11 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                     int val;
                     if (sfr<0x80 || sfr>0xff) {
                         printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
-                        return 1;
+                        return -EINVAL;
                     }
                     if (!endptr) {
                         printf("No value specified\n");
-                        return 1;
+                        return -EINVAL;
                     }
                     val = strtoul(endptr+1, NULL, 0);
 
@@ -231,7 +231,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
 
             default:
                 printf("Usage: %s [-d] [-s sfr:val]\n", argv[0]);
-                return 1;
+                return -EINVAL;
         }
     }
     return 0;
@@ -346,13 +346,13 @@ static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv) {
 
     if (argc != 2) {
         printf("Usage: %s [romfile]\n", argv[0]);
-        return 1;
+        return -EINVAL;
     }
 
     int fd = open(argv[1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (-1 == fd) {
         perror("Unable to open output file");
-        return 2;
+        return -errno;
     }
 
     dbg_read_ram(dbg, ram, 0, sizeof(ram));
@@ -407,7 +407,7 @@ static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv) {
 
     if (argc != 3) {
         printf("Usage: %s [offset] [byte_count]\n", argv[0]);
-        return 1;
+        return -EINVAL;
     }
 
     offset = strtoul(argv[1], NULL, 0);
@@ -415,7 +415,7 @@ static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv) {
 
     if (count <= 0 || count > 16384) {
         printf("Attempted to read too many bytes\n");
-        return 2;
+        return -ENOSPC;
     }
 
     uint8_t bfr[count];
@@ -485,7 +485,6 @@ static int dbg_do_help(struct dbg *dbg, int argc, char **argv) {
         printf("For more information on a specific command, type 'help [command]'\n");
     }
 
-
     return 0;
 }
 
@@ -520,12 +519,13 @@ char **cmd_completion(const char *text, int start, int end) {
  * the code just before we call it in order to be able to read from an
  * arbitrary area of memory.
  */
-static int find_offsets(struct dbg *dbg) {
+static int find_fixups(struct dbg *dbg) {
     uint8_t program_memory[512];
     int i;
     int found_sfr_get = 0;
     int found_sfr_set = 0;
 
+    printf("Locating fixup hooks... "); fflush(stdout);
     dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
 
     for (i=0; i<sizeof(program_memory); i++) {
@@ -549,9 +549,10 @@ static int find_offsets(struct dbg *dbg) {
     }
 
     if (!found_sfr_get)
-        printf("Fixup couldn't find sfr_get opcodes\n");
+        printf(" [couldn't find sfr_get opcodes] ");
     if (!found_sfr_set)
-        printf("Fixup couldn't find sfr_set opcodes\n");
+        printf(" [couldn't find sfr_set opcodes] ");
+    printf("Done\n");
     return 0;
 }
 
@@ -566,7 +567,7 @@ int dbg_main(struct sd_state *sd) {
     rl_attempted_completion_function = cmd_completion;
     rl_bind_key('\t', rl_complete);
 
-    find_offsets(&dbg);
+    find_fixups(&dbg);
 
     while (!dbg.should_quit) {
         char *cmd = readline(DBG_PROMPT);

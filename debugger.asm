@@ -244,11 +244,8 @@ cmd_jump:
         sjmp    xmit_response
 
 cmd_nand:
-;        .db 0xa5, 0xf5, 0x41
         mov     0xa2, #0x5
         mov     0xa3, #0x0
-;        mov     0xa1, #0x87
-;        clr     0xa0.7
         mov     0xa1, 0x20
         mov     0x20, #1
         mov     0x21, #2
