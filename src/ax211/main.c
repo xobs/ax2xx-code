@@ -107,7 +107,7 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
 
 
 static int load_and_enter_debugger(struct sd_state *state, char *filename) {
-    uint8_t response1[6];
+    uint8_t response[8];
     uint8_t file[512+(4*sizeof(uint16_t))];
     memset(file, 0xff, sizeof(file));
 
@@ -132,9 +132,9 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             return 1;
 
         xmit_mmc_dat4(state, file, sizeof(file));
-        sd_toggle_clk(state, 2);
-        xmit_mmc_cmd(state, response1, 1);
-        printf("Immediate code-load response: %02x\n", response1[0]);
+        sd_toggle_clk(state, 8);
+        //rcvr_mmc_cmd(state, response, 1);
+        //printf("Immediate code-load response: %02x\n", response[0]);
 
         for (tries=0; tries<2; tries++) {
             if (-1 != rcvr_mmc_cmd_start(state, 50))
@@ -147,15 +147,13 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
             continue;
         }
 
-        rcvr_mmc_cmd(state, response1, sizeof(response1));
+        rcvr_mmc_cmd(state, response, sizeof(response));
 
-        printf("Result of factory mode: %d\n", ret);
-        printf("\nResponse1 (%02x):\n", response1[0]);
-        print_hex(response1+1, sizeof(response1)-1);
-
-        if (response1[0] != 0 || response1[1] != 0x0a) {
-            printf("Expected 0x00 0x0a, got 0x%02x 0x%02x\n",
-                    response1[0], response1[1]);
+        if (response[0] != 0 || response[1] != 0x01) {
+            printf("Result of factory mode: %d\n", ret);
+            print_hex(response, sizeof(response));
+            printf("Expected 0x00 0x01, got 0x%02x 0x%02x\n",
+                    response[0], response[1]);
             continue;
         }
 

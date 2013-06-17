@@ -156,6 +156,11 @@ setup:
         mov     DPTR, #0x0203
         lcall   set_isr
         acall   setup_sdport
+        mov     0x31, 0
+        mov     0x20, #1;#0x58
+        mov     0x21, #0x6f
+        mov     0x22, #0x62
+        mov     0x23, #0x73
 
         ret
 

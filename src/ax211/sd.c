@@ -1096,21 +1096,18 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
         return -1;
 
     rcvr_mmc_cmd(state, response, sizeof(response));
-    printf("Sending CMD%d {0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}:\n",
-            bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
-    printf("Reset response after %d ticks: "
+    printf("Debug mode APPO response [%d]: "
            "{0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}\n",
             i,
             response[0], response[1], response[2],
             response[3], response[4], response[5]);
-    if (((crc7(response, 5)<<1)|1) == response[5]) {
-        printf("CRC7 matches!  %02x\n", response[5]);
-    }
-    else {
-        printf("CRC7 differs.  Got %02x, calculated %02x\n",
+    if (((crc7(response, 5)<<1)|1) != response[5])
+        printf("Knock CRC7 differs.  Got %02x, calculated %02x\n",
                response[5], ((crc7(response, 5)<<1)|1)); 
-    }
-    return response[0];
+
+    if (response[0] != 0x3f)
+        return 1;
+    return 0;
 }
 
 
