@@ -155,6 +155,7 @@ setup:
         lcall   set_isr
         mov     DPTR, #0x0203
         lcall   set_isr
+        lcall   wait_for_packet ; Ensure SD hardware is idle
         acall   setup_sdport
 
         ret
