@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <wordexp.h>
 #include <string.h>
+#include <getopt.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <strings.h>
@@ -10,12 +11,17 @@
 #include <readline/history.h>
 #include "sd.h"
 #include "crc-16.h"
+#include "nand.h"
 
 #define DBG_PROMPT "AX211> "
 
-struct dbg_state {
+struct dbg {
     int                 should_quit;
     struct sd_state     *sd;
+    struct nand_state   *nand;
+
+    int                 read_sfr_offset;
+    int                 write_sfr_offset;
 };
 
 /* These are SD commands as they get sent to the card */
@@ -25,24 +31,30 @@ enum protocol_code {
     cmd_peek = 2,
     cmd_poke = 3,
     cmd_jump = 4,
+    cmd_nand = 5,
+    cmd_sfr_set = 6,
+    cmd_sfr_get = 7,
 };
 
 struct debug_command {
     char    *name;
     char    *desc;
     char    *help;
-    int (*func)(struct dbg_state *dbg, int argc, char **argv);
+    int (*func)(struct dbg *dbg, int argc, char **argv);
 };
 
+int disasm_8051(FILE *ofile, uint8_t *bfr, int size, int offset);
 
-static int dbg_do_hello(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_null(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_poke(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_jump(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_help(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_disasm(struct dbg_state *dbg, int argc, char **argv);
-static int dbg_do_dump_rom(struct dbg_state *dbg, int argc, char **argv);
+static int dbg_do_hello(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_null(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_peek(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_poke(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_jump(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_help(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_nand(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
     {
@@ -78,8 +90,8 @@ static struct debug_command debug_commands[] = {
         .func = dbg_do_dump_rom,
         .desc = "Dump all of ROM to a file",
         .help = "Dumps all of the AX211's 16 kB to a file.\n"
-                "It is recommended you run this first, as normally "
-                "calling peek() will clobber RAM address 0x200.",
+                "Note that, for some reason, the first 0x200 bytes "
+                "cannot be read.\n",
     },
     {
         .name = "null",
@@ -96,6 +108,28 @@ static struct debug_command debug_commands[] = {
                 "Usage: disasm [address] [bytes]\n",
     },
     {
+        .name = "sfr",
+        .func = dbg_do_sfr,
+        .desc = "Manipulate special function registers",
+        .help = "Usage: sfr [-d] [-s sfr:val]\n"
+                "   -d          Dump special function registers\n"
+                "   -s sfr:val  Set SFR [sfr] to value [val]\n"
+                ,
+    },
+    {
+        .name = "nand",
+        .func = dbg_do_nand,
+        .desc = "Operate on the NAND in some fashion",
+        .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-t SFR]\n"
+                "   -r  Reset NAND logging\n"
+                "   -l  Begin NAND logging\n"
+                "   -s  Stop NAND logging\n"
+                "   -d  Dump NAND events\n"
+                "   -v  Print NAND status\n"
+                "   -t  Test NAND command\n"
+                ,
+    },
+    {
         .name = "help",
         .func = dbg_do_help,
         .desc = "Print this help",
@@ -105,36 +139,8 @@ static struct debug_command debug_commands[] = {
 
 
 
-static int cmd_read_offset_count(struct dbg_state *dbg, int argc, char **argv,
-                                 uint8_t *src_hi, uint8_t *src_lo,
-                                 uint8_t *count) {
-    int src;
-    int cnt;
-    if (argc < 3) {
-        printf("Not enough arguments!  Usage: %s [addr] [count]\n",
-                argv[0]);
-        return -EINVAL;
-    }
 
-    src = strtoul(argv[1], NULL, 0);
-    cnt = strtoul(argv[2], NULL, 0);
-
-    if (cnt <= 0) {
-        printf("Must specify at least 1 byte\n");
-        return -ERANGE;
-    }
-    if (cnt > 256) {
-        printf("Can read at most 255 bytes at a time\n");
-    }
-
-    *count  = cnt;
-    *src_hi = (src>>8)&0xff;
-    *src_lo = (src)&0xff;
-    return 0;
-}
-
-
-static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
+static int dbg_txrx(struct dbg *dbg, enum protocol_code code,
                     uint8_t args[4], uint8_t *out, int outsize) {
     uint8_t ret[outsize+1]; // Two extra bytes for start and crc7
     uint8_t bfr[6];
@@ -162,7 +168,130 @@ static int dbg_txrx(struct dbg_state *dbg, enum protocol_code code,
     return 0;
 }
 
-static int dbg_read_ram(struct dbg_state *dbg, uint8_t *buf,
+
+int dbg_poke(struct dbg *dbg, int offset, uint8_t val) {
+    int src_lo, src_hi;
+    uint8_t args[4];
+    uint8_t bfr[5];
+    src_hi = (offset>>8)&0xff;
+    src_lo = (offset)&0xff;
+
+    args[0] = src_hi;
+    args[1] = src_lo;
+    args[2] = val;
+    args[3] = 0;
+    if (dbg_txrx(dbg, cmd_poke, args, bfr, sizeof(bfr)))
+        return -1;
+    return bfr[0];
+}
+    
+
+static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
+    int ch;
+    int sfr;
+    uint8_t sfr_table[128];
+    while ((ch = getopt(argc, argv, "ds:")) != -1) {
+        switch(ch) {
+            case 'd':
+                for (sfr=0x80; sfr<=0xff; sfr++) {
+                    uint8_t cmd[4];
+                    uint8_t bfr[5];
+                    dbg_poke(dbg, dbg->read_sfr_offset, sfr);
+                    memset(cmd, 0, sizeof(cmd));
+                    dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                    sfr_table[sfr-0x80] = bfr[0];
+                }
+                print_hex_offset(sfr_table, sizeof(sfr_table), 0x80);
+                break;
+
+            case 's': {
+                    uint8_t cmd[4];
+                    uint8_t bfr[5];
+                    char *endptr;
+                    int sfr = strtoul(optarg, &endptr, 0);
+                    int val;
+                    if (sfr<0x80 || sfr>0xff) {
+                        printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
+                        return 1;
+                    }
+                    if (!endptr) {
+                        printf("No value specified\n");
+                        return 1;
+                    }
+                    val = strtoul(endptr+1, NULL, 0);
+
+                    printf("Setting SFR_%02x -> %02x\n", sfr, val);
+
+                    dbg_poke(dbg, dbg->write_sfr_offset, sfr);
+                    memset(cmd, 0, sizeof(cmd));
+                    cmd[0] = val;
+                    dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+                }
+                break;
+
+            default:
+                printf("Usage: %s [-d] [-s sfr:val]\n", argv[0]);
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
+    int ch;
+    while ((ch = getopt(argc, argv, "rlsdt:v")) != -1) {
+        switch(ch) {
+            case 'r':
+                nand_log_reset(dbg->nand);
+                break;
+
+            case 'l':
+                nand_log_enable(dbg->nand);
+                break;
+
+            case 's':
+                nand_log_disable(dbg->nand);
+                break;
+
+            case 'd':
+                nand_log_dump(dbg->nand);
+                break;
+
+            case 't': {
+                    uint8_t cmd[4];
+                    uint8_t bfr[5];
+                    memset(cmd, 0, sizeof(cmd));
+                    cmd[0] = strtoul(optarg, NULL, 0);
+                    cmd[1] = 0x5;
+                    cmd[2] = 0;
+                    nand_log_reset(dbg->nand);
+                    nand_log_enable(dbg->nand);
+                    dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+                    nand_log_dump(dbg->nand);
+                }
+                break;
+                
+
+            case 'v': {
+                struct timespec ts;
+                nand_log_gettime(dbg->nand, &ts);
+                printf("FPGA time: %ld.%09ld\n", ts.tv_sec, ts.tv_nsec);
+                printf("%d records sitting in log buffer\n", nand_log_count(dbg->nand));
+                printf("Log %s full\n", nand_log_is_full(dbg->nand)?"is":"is not");
+                printf("Log status is: %x\n", nand_log_status(dbg->nand));
+                printf("Max data depth: %d\n", nand_log_max_data_depth(dbg->nand));
+                printf("Max command depth: %d\n", nand_log_max_cmd_depth(dbg->nand));
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+    return 0;
+}
+
+static int dbg_read_ram(struct dbg *dbg, uint8_t *buf,
                         int offset, int count) {
     while (count>0) {
         uint8_t args[4];
@@ -180,7 +309,7 @@ static int dbg_read_ram(struct dbg_state *dbg, uint8_t *buf,
 
 
 
-static int dbg_do_hello(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_hello(struct dbg *dbg, int argc, char **argv) {
     uint8_t args[4];
     uint8_t response[5];
     memset(args, 0, sizeof(args));
@@ -201,7 +330,7 @@ static int dbg_do_hello(struct dbg_state *dbg, int argc, char **argv) {
     return 0;
 }
 
-static int dbg_do_null(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_null(struct dbg *dbg, int argc, char **argv) {
     uint8_t args[4];
     uint8_t bfr[5];
     memset(args, 0, sizeof(args));
@@ -211,7 +340,7 @@ static int dbg_do_null(struct dbg_state *dbg, int argc, char **argv) {
 }
 
 
-static int dbg_do_dump_rom(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv) {
     uint8_t ram[16384];
     memset(ram, 0, sizeof(ram));
 
@@ -234,9 +363,14 @@ static int dbg_do_dump_rom(struct dbg_state *dbg, int argc, char **argv) {
 }
 
 
-static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_peek(struct dbg *dbg, int argc, char **argv) {
     int src;
     int cnt;
+
+    if (argc != 3) {
+        printf("Usage: %s [offset] [count]\n", argv[0]);
+        return -EINVAL;
+    }
 
     src = strtoul(argv[1], NULL, 0);
     cnt = strtoul(argv[2], NULL, 0);
@@ -261,36 +395,42 @@ static int dbg_do_peek(struct dbg_state *dbg, int argc, char **argv) {
 
     uint8_t bfr[cnt+1];
     dbg_read_ram(dbg, bfr, src, cnt);
-    print_hex(bfr, cnt);
+    print_hex_offset(bfr, cnt, src);
 
     return 0;
 }
 
-int disasm_8051(FILE *ofile, uint8_t *bfr, int size, int offset);
-static int dbg_do_disasm(struct dbg_state *dbg, int argc, char **argv) {
-    uint8_t args[4];
+static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv) {
     int count;
+    int offset;
     int ret;
-    ret = cmd_read_offset_count(dbg, argc, argv, &args[0], &args[1], &args[2]);
+
+    if (argc != 3) {
+        printf("Usage: %s [offset] [byte_count]\n", argv[0]);
+        return 1;
+    }
+
+    offset = strtoul(argv[1], NULL, 0);
+    count = strtoul(argv[2], NULL, 0);
+
+    if (count <= 0 || count > 16384) {
+        printf("Attempted to read too many bytes\n");
+        return 2;
+    }
+
+    uint8_t bfr[count];
+    ret = dbg_read_ram(dbg, bfr, offset, count);
     if (ret)
         return ret;
 
-    count = args[2];
-    if (!count)
-        count=256;
-    count++;
-    uint8_t bfr[count];
-    memset(bfr, 0, sizeof(bfr));
-    dbg_txrx(dbg, cmd_peek, args, bfr, sizeof(bfr));
-
-    disasm_8051(stdout, bfr, count-1, strtoul(argv[1], NULL, 0));
+    disasm_8051(stdout, bfr, count, offset);
     return 0;
 }
 
-static int dbg_do_poke(struct dbg_state *dbg, int argc, char **argv) {
-    int src_lo, src_hi, byte;
-    uint8_t args[4];
-    uint8_t bfr[5];
+static int dbg_do_poke(struct dbg *dbg, int argc, char **argv) {
+    int offset;
+    uint8_t value;
+    int old_value;
 
     if (argc < 3) {
         printf("Not enough arguments!  Usage: %s [addr] [count]\n",
@@ -298,25 +438,19 @@ static int dbg_do_poke(struct dbg_state *dbg, int argc, char **argv) {
         return -EINVAL;
     }
 
-    src_lo = strtoul(argv[1], NULL, 0);
-    byte  = strtoul(argv[2], NULL, 0);
-    src_hi = (src_lo>>8)&0xff;
-    src_lo = (src_lo)&0xff;
-    args[0] = src_hi;
-    args[1] = src_lo;
-    args[2] = byte;
-    dbg_txrx(dbg, cmd_poke, args, bfr, sizeof(bfr));
-    printf("Offset 0x%02x%02x 0x%02x -> 0x%02x\n", bfr[0], bfr[1], bfr[2], byte);
-    print_hex(bfr, sizeof(bfr)-1);
+    offset = strtoul(argv[1], NULL, 0);
+    value = strtoul(argv[2], NULL, 0);
+    old_value = dbg_poke(dbg, offset, value);
+    printf("Offset 0x%04x 0x%02x -> 0x%02x\n", offset, old_value, value);
     return 0;
 }
 
-static int dbg_do_jump(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_jump(struct dbg *dbg, int argc, char **argv) {
     printf("Jumping...\n");
     return 0;
 }
 
-static int dbg_do_help(struct dbg_state *dbg, int argc, char **argv) {
+static int dbg_do_help(struct dbg *dbg, int argc, char **argv) {
     struct debug_command *cmd = debug_commands;
 
     if (argc > 1) {
@@ -380,14 +514,59 @@ char **cmd_completion(const char *text, int start, int end) {
     return rl_completion_matches(text, cmd_completion_generator);
 }
 
+/* Look through RAM to find our sentinals.  They are patterns of code
+ * that indicate where to find various offsets.
+ * Because the 8051 can't dynamically read from IRAM, we actually patch
+ * the code just before we call it in order to be able to read from an
+ * arbitrary area of memory.
+ */
+static int find_offsets(struct dbg *dbg) {
+    uint8_t program_memory[512];
+    int i;
+    int found_sfr_get = 0;
+    int found_sfr_set = 0;
+
+    dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
+
+    for (i=0; i<sizeof(program_memory); i++) {
+        // Special charachter for our detection.
+        if (program_memory[i] == 0xa5
+            && program_memory[i+1] == 0x60
+            && program_memory[i+2] == 0x61) {
+            found_sfr_get = 1;
+            dbg_poke(dbg, 0x2900+i, 0x85);  // mov
+            dbg->read_sfr_offset = 0x2900+i+1;
+            dbg_poke(dbg, 0x2900+i+2, 0x20);  // Destination register
+        }
+        if (program_memory[i] == 0xa5
+            && program_memory[i+1] == 0x62
+            && program_memory[i+2] == 0x63) {
+            found_sfr_set = 1;
+            dbg_poke(dbg, 0x2900+i, 0x85);  // mov
+            dbg_poke(dbg, 0x2900+i+1, 0x20);  // Source register
+            dbg->write_sfr_offset = 0x2900+i+2;
+        }
+    }
+
+    if (!found_sfr_get)
+        printf("Fixup couldn't find sfr_get opcodes\n");
+    if (!found_sfr_set)
+        printf("Fixup couldn't find sfr_set opcodes\n");
+    return 0;
+}
+
 
 int dbg_main(struct sd_state *sd) {
-    struct dbg_state dbg;
+    struct dbg dbg;
     memset(&dbg, 0, sizeof(dbg));
 
     dbg.sd = sd;
+    dbg.nand = nand_init();
+
     rl_attempted_completion_function = cmd_completion;
     rl_bind_key('\t', rl_complete);
+
+    find_offsets(&dbg);
 
     while (!dbg.should_quit) {
         char *cmd = readline(DBG_PROMPT);
@@ -407,6 +586,8 @@ int dbg_main(struct sd_state *sd) {
 
         add_history(cmd);
         exp_res = wordexp(cmd, &cmdline, 0);
+        optind = 0;
+
         if (exp_res == WRDE_BADCHAR) {
             printf("Illegal character found in command\n");
             continue;

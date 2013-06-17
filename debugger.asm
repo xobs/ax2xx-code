@@ -25,12 +25,13 @@
 .equ    RESET, 0
 .equ    PORT1, 0xF6
 
+.equ    NPS, 0x9e
+
 .equ    LED_STATE, 0x40
 
 .equ    SD_WAITING, 0x24
 
 .org 0x2900
-
 ; This gets called from the ROM.
 ; ---------------------------------------------------------------------------
 ; This gets called from an interrupt context, from within ROM.  We want to
@@ -162,16 +163,22 @@ setup:
 main_loop:
         mov     A, 0x31         ; Copy SD command register to accumulator
         cjne    A, #0x00, not_c00
-        sjmp    cmd_null
+        ajmp    cmd_null
 not_c00:cjne    A, #0x01, not_c01
-        sjmp    cmd_echo
+        ajmp    cmd_echo
 not_c01:cjne    A, #0x02, not_c02
-        sjmp    cmd_peek
+        ajmp    cmd_peek
 not_c02:cjne    A, #0x03, not_c03
-        sjmp    cmd_poke
+        ajmp    cmd_poke
 not_c03:cjne    A, #0x04, not_c04
-        sjmp    cmd_jump
-not_c04:sjmp    cmd_error
+        ajmp    cmd_jump
+not_c04:cjne    A, #0x05, not_c05
+        ajmp    cmd_nand
+not_c05:cjne    A, #0x06, not_c06
+        ajmp    cmd_sfr_set
+not_c06:cjne    A, #0x07, not_c07
+        ajmp    cmd_sfr_get
+not_c07:ajmp    cmd_error
 
 ; Send a 'hello' packet
 cmd_hello:
@@ -179,7 +186,7 @@ cmd_hello:
         mov     0x21, #0x1f
         mov     0x22, #0x0f
         mov     0x23, #0x0f
-        sjmp    xmit_response
+        ajmp    xmit_response
 
 ; Send all zeroes
 cmd_null:
@@ -236,6 +243,35 @@ cmd_jump:
         mov     0x23, #1
         sjmp    xmit_response
 
+cmd_nand:
+;        .db 0xa5, 0xf5, 0x41
+        mov     0xa2, #0x5
+        mov     0xa3, #0x0
+;        mov     0xa1, #0x87
+;        clr     0xa0.7
+        mov     0xa1, 0x20
+        mov     0x20, #1
+        mov     0x21, #2
+        mov     0x22, #3
+        mov     0x23, #4
+        sjmp    xmit_response
+
+cmd_sfr_get:
+        ; This will get replaced by "mov    0x20, [SFR]" at runtime
+        .db     0xa5, 0x60, 0x61
+        mov     0x21, #0
+        mov     0x22, #0
+        mov     0x23, #0
+        sjmp    xmit_response
+
+cmd_sfr_set:
+        ; This will get replaced by "mov    [SFR], 0x20" at runtime
+        .db     0xa5, 0x62, 0x63
+        mov     0x21, #0
+        mov     0x22, #0
+        mov     0x23, #0
+        sjmp    xmit_response
+
 ; Send an error packet back
 cmd_error:
         mov     0x20, #0xa5
@@ -280,3 +316,4 @@ top_of_pause:
         djnz    R6, top_of_pause
         djnz    R7, top_of_pause
         ret
+

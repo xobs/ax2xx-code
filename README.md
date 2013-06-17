@@ -49,7 +49,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A0  |       |       |       |       |       |       |       |       |
+     A0  |       | NCMD  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      A8  |  IE   |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -115,6 +115,8 @@ SDDH:   SD transfer source address (high byte), divided by 4
 SDDIR:  SD pin direction registers
 
 PORT1:  GPIO for the NAND port.
+
+NCMD:   NAND command.  The command to send comes from this table:
 
 ACC:    Accumulator
 
