@@ -43,20 +43,26 @@ subdivided:
 
 * IRAM - located on-chip.  256 bytes in total.  Accessed using "mov"
 instruction.
-** IRAM address 0-7 corresponds to CPU registers R0-R7
-** IRAM address 8-0x7f are on-chip RAM
-** IRAM address 0x80-0xff are Special Function Registers (SFRs).  See
-below.
+    * IRAM address 0-7 corresponds to CPU registers R0-R7
+    * IRAM address 8-0x7f are on-chip RAM
+    * IRAM address 0x80-0xff are Special Function Registers (SFRs).  See
+    below.
 
 * XRAM - 16 kilobytes of "External" RAM.  Accessed by storing an address in
 DPTR (which is really made up of SFR 0x82 and 0x83, called DPL and DPH
 respectively) and either loading to the accumulator using "movx A, @DPTR" or
 storing from the accumulator using "movx @DPTR, A".
-** Code execution for APPO factory mode begins at offset 0x2900
-** Offset 0x2ba0 contains something interesting.  I'm not sure what.
-** Offset 0x2e00-0x3fff is read-only and contains zeroes
-** Offset 0x0000 is mirrored at 0x4000, 0x8000, and 0xc000
-
+    * 0x0000 - 0x0006 is reserved somehow.  Contains 0x51 0x00 0x00 0x00 ...
+    * 0x0007 - 0x01ff is protected and returns 0xff
+    * 0x0200 - 0x2002 is interrupt vector 0 (SPI)
+    * 0x0203 - 0x2005 is interrupt vector 1 (other SPI)
+    * 0x0206 - 0x0208 is interrupt vector 2 (NAND)
+    * 0x0209 - 0x020b is interrupt vector 3 (unknown)
+    * 0x020c - 0x02aff is general-purpose RAM
+        * Code execution for APPO factory mode begins at offset 0x2900
+    * 0x2ba0 - 0x2bff contains something interesting; I'm not sure what
+    * 0x2c00 - 0x3fff is read-only and contains zeroes
+    * 0x0000 - 0x3fff is mirrored at 0x4000, 0x8000, and 0xc000
 
 
 Extended Opcodes
