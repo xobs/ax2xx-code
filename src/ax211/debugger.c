@@ -16,14 +16,14 @@
 #define DBG_PROMPT "AX211> "
 
 struct dbg {
-    int                 should_quit;
-    int                 ret;
-    struct sd_state     *sd;
-    struct nand_state   *nand;
+    int             should_quit;
+    int             ret;
+    struct sd_state *sd;
+    struct nand     *nand;
 
-    int                 read_sfr_offset;
-    int                 write_sfr_offset;
-    int                 ext_op_offset;
+    int             read_sfr_offset;
+    int             write_sfr_offset;
+    int             ext_op_offset;
 };
 
 /* These are SD commands as they get sent to the card */

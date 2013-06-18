@@ -5,8 +5,10 @@
 #include <unistd.h>
 #include <strings.h>
 #include <string.h>
+
 #include "eim.h"
 #include "nand.h"
+#include "sd.h"
 
 #define LOGENTRY_LEN 8
 #define FIFOWIDTH 4
@@ -14,8 +16,11 @@
 #define DDR3_FIFODEPTH 64
 #define PULSE_GATE_MASK 0x1000
 
-struct nand_state {
-    int res;
+struct nand {
+    int         res;
+    uint8_t     *data_buffer;
+    int         data_buffer_size;
+    uint8_t     data_buffer_ctrl;
 };
 
 struct nand_event {
@@ -33,33 +38,33 @@ enum nand_ctrl_pins {
     nand_ctrl_cs  = 0x10,
 };
 
-struct nand_state *nand_init(void) {
-    struct nand_state *n;
+struct nand *nand_init(void) {
+    struct nand *n;
 
-    n = malloc(sizeof(struct nand_state));
+    n = malloc(sizeof(struct nand));
     memset(n, 0, sizeof(*n));
     return n;
 }
 
-int nand_log_reset(struct nand_state *n) {
+int nand_log_reset(struct nand *n) {
     // Reset the NAND log
     eim_set(fpga_w_log_cmd, NAND_LOG_RESET);
     eim_set(fpga_w_log_cmd, NAND_LOG_STOP);
     return 0;
 }
 
-int nand_log_enable(struct nand_state *n) {
+int nand_log_enable(struct nand *n) {
     usleep(10000);
     eim_set(fpga_w_log_cmd, NAND_LOG_RUN); // run the log
     return 0;
 }
 
-int nand_log_disable(struct nand_state *n) {
+int nand_log_disable(struct nand *n) {
     eim_set(fpga_w_log_cmd, NAND_LOG_STOP); // stop the log
     return 0;
 }
 
-int nand_log_gettime(struct nand_state *n, struct timespec *t) {
+int nand_log_gettime(struct nand *n, struct timespec *t) {
     t->tv_nsec  = eim_get(fpga_r_log_time_nsl) & 0xFFFF;
     t->tv_nsec |= eim_get(fpga_r_log_time_nsh) << 16;
     t->tv_sec   = eim_get(fpga_r_log_time_sl) & 0xFFFF;
@@ -67,7 +72,7 @@ int nand_log_gettime(struct nand_state *n, struct timespec *t) {
     return 0;
 }
 
-int nand_log_count(struct nand_state *n) {
+int nand_log_count(struct nand *n) {
     int entries;
     entries  = eim_get(fpga_r_log_entry_l) & 0xFFFF;
     entries |= eim_get(fpga_r_log_entry_h) << 16;
@@ -78,31 +83,66 @@ int nand_log_count(struct nand_state *n) {
     return entries;
 }
 
-int nand_log_status(struct nand_state *n) {
+int nand_log_status(struct nand *n) {
     int stat;
     stat = eim_get(fpga_r_log_stat);
     return stat;
 }
 
-int nand_log_max_cmd_depth(struct nand_state *n) {
+int nand_log_max_cmd_depth(struct nand *n) {
     int stat;
     stat = nand_log_status(n);
     return (stat>>4)&0x1f;
 }
 
-int nand_log_max_data_depth(struct nand_state *n) {
+int nand_log_max_data_depth(struct nand *n) {
     int stat;
     stat = nand_log_status(n);
     return (stat>>9)&0x7f;
 }
 
-int nand_log_is_full(struct nand_state *n) {
+int nand_log_is_full(struct nand *n) {
     return eim_get(fpga_r_log_debug)&1;
 }
 
 
-static void trace_printline(int num, struct nand_event *evt) {
-    printf("Packet %6d: %4s %4s %4s %4s %4s %02x . %lu.%lu\n",
+static int trace_printbuffer(struct nand *n) {
+    if (!n->data_buffer_size)
+        return 0;
+
+    if (n->data_buffer_ctrl&nand_ctrl_we)
+        printf("Write buffer:\n");
+    else if (n->data_buffer_ctrl&nand_ctrl_re)
+        printf("Read buffer:\n");
+    else
+        printf("No-flags buffer (bug?):\n");
+    print_hex(n->data_buffer, n->data_buffer_size);
+    free(n->data_buffer);
+    n->data_buffer = NULL;
+    n->data_buffer_size = 0;
+    n->data_buffer_ctrl = 0;
+    return 0;
+}
+
+
+static int trace_printline(struct nand *n, int num, struct nand_event *evt) {
+    // If it's a data packet, stuff it in a buffer
+    if ((!(evt->ctrl&nand_ctrl_ale)) && (!(evt->ctrl&nand_ctrl_cle))) {
+        // If it's the same packet type as the last one, add on to the buffer
+        if (evt->ctrl == n->data_buffer_ctrl) {
+            n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
+            n->data_buffer[n->data_buffer_size-1] = evt->data;
+        }
+        // New buffer type
+        else {
+            trace_printbuffer(n);
+            n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
+            n->data_buffer[n->data_buffer_size-1] = evt->data;
+            n->data_buffer_ctrl = evt->ctrl;
+        }
+    }
+    else {
+        printf("Packet %6d: %4s %4s %4s %4s %4s %02x . %lu.%lu\n",
             num,
             evt->ctrl&nand_ctrl_ale?"ALE":"",
             evt->ctrl&nand_ctrl_cle?"CLE":"",
@@ -110,9 +150,15 @@ static void trace_printline(int num, struct nand_event *evt) {
             evt->ctrl&nand_ctrl_re ?"RE" :"",
             evt->ctrl&nand_ctrl_cs ?"CS" :"",
             evt->data, evt->ts.tv_sec, evt->ts.tv_nsec);
+    }
+    return 0;
 }
 
-int nand_log_dump(struct nand_state *n) {
+static int trace_finish(struct nand *n) {
+    return trace_printbuffer(n);
+}
+
+int nand_log_dump(struct nand *n) {
     unsigned int readback[DDR3_FIFODEPTH];
     int i;
     int line=0;
@@ -180,7 +226,7 @@ int nand_log_dump(struct nand_state *n) {
 //                write(ofd, &evt, sizeof(evt));
 
             if(verbose && to_print>0)
-                trace_printline(line++, &evt);
+                trace_printline(n, line++, &evt);
             to_print--;
         }
         if( !verbose ) {
@@ -194,5 +240,6 @@ int nand_log_dump(struct nand_state *n) {
         eim_set( fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
         eim_set( fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
     }
+    trace_finish(n);
     return 0;
 }
