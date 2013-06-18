@@ -35,6 +35,123 @@ Notes on the AX211
 The AX211 isn't well documented.  This aims to fix that.
 
 
+Memory Areas
+------------
+
+The 8051 has two different kinds of areas, each of which is further
+subdivided:
+
+* IRAM - located on-chip.  256 bytes in total.  Accessed using "mov"
+instruction.
+** IRAM address 0-7 corresponds to CPU registers R0-R7
+** IRAM address 8-0x7f are on-chip RAM
+** IRAM address 0x80-0xff are Special Function Registers (SFRs).  See
+below.
+
+* XRAM - 16 kilobytes of "External" RAM.  Accessed by storing an address in
+DPTR (which is really made up of SFR 0x82 and 0x83, called DPL and DPH
+respectively) and either loading to the accumulator using "movx A, @DPTR" or
+storing from the accumulator using "movx @DPTR, A".
+** Code execution for APPO factory mode begins at offset 0x2900
+** Offset 0x2ba0 contains something interesting.  I'm not sure what.
+** Offset 0x2e00-0x3fff is read-only and contains zeroes
+** Offset 0x0000 is mirrored at 0x4000, 0x8000, and 0xc000
+
+
+
+Extended Opcodes
+----------------
+
+The AX211 is likely similar to the AX208, which is a digital picture frame
+processor from AppoTech.  A limited reference manual is available that
+describes some 16-bit opcodes provided by this processor.
+
+Unfortunately the opcodes themselves aren't described, only the mnemonics.
+Fortunately, it appears as though the 8051 instruction set is listed in
+opcode order (i.e. "NOP" [opcode 0x00] is listed first, followed by AJMP
+[opcode 0x01] and LJMP [opcode 0x02] and so-on), so we shall assume that
+the extended mnemonics are also listed in the same order.
+
+For information on standard 8051 opcodes, see:
+http://www.win.tue.nl/~aeb/comp/8051/set8051.html
+
+Extended opcodes begin with the "Undefined" opcode 0xa5.  This opcode was
+undefined in the original 8051, and is sometimes used by manufacturers to
+provide additional instructions while retaining compatibility.
+
+0xa5 0x90 -> register 0xc0c1 is xored with 0xc8c9 and stored in 0xc0c1
+
+0xa5 0x91 -> clear register ER2
+
+         |   0   |   1   |   2   |   3   |   4   |   5   |   6   |   7   |
+         |   8   |   9   |   A   |   B   |   C   |   D   |   E   |   F   |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     00  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     08  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     10  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     18  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     20  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     28  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     30  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     38  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     40  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     48  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     50  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     58  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     60  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     68  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     70  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     78  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     80  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     88  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     90  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     98  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     A0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     A8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     B0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     B8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     C0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     C8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     D0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     D8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     E0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     E8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     F0  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+     F8  |       |       |       |       |       |       |       |       |
+    -----+-------+-------+-------+-------+-------+-------+-------+-------+
+
+
 Special Function Registers
 --------------------------
     
@@ -49,27 +166,27 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A0  |       | NCMD  |       |       |       |       |       |       |
+     A0  | NTYPE | NCMD  | NSRCL | NSRCH |       |       | ER00  | ER01  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      A8  |  IE   |       |       | NADD0 | NADDE | NADD2 | NADD3 | NADD4 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     B0  |       |       |       |       |       |       |       |       |
+     B0  |       | RAND  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B8  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     C0  |       |       |       |       |       |       |       |       |
+     C0  | ER10  | ER11  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     C8  |       |       |       |       |       |       |       |       |
+     C8  | ER20  | ER21  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      D0  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     D8  |       |       |       |       |       |       |       |       |
+     D8  | ER30  | ER31  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     E0  |  ACC  |       |       |       |       |       |       |       |
+     E0  | ACC   |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E8  |       |       | N???? | SDDIR |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     F0  |   B   |       |       |       |       |       | PORT1 |       |
+     F0  | B     |       |       |       |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F8  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -81,6 +198,7 @@ DPL:    Data Pointer (low)
 DPH:    Data Pointer (high)
 
 IE:     Interrupt enable
+
         | Axxx 4321 |
             A = all interrupts (0 - all interrupts disabled)
             4 - enable/disable interrupt 4
@@ -89,9 +207,15 @@ IE:     Interrupt enable
             1 - enable/disable interrupt 1
 
 SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear to be extra bits that determine what sort of transfer it is.
+
         | ?ABC ???S |
             S = "start transfer" bit
             ABC = ? (maybe indicates 'CMD' bit?)
+
+N????:  Does weird things.
+
+        | ???? b??? |
+            b - When 0, NAND transfer doesn't work
 
 SDI1..4: Register values R1..R4 from the SD command
 
@@ -112,11 +236,17 @@ SDBH:   SD transfer bytes (high byte), minus one
 SDDL:   SD transfer source address (low byte), divided by 4
 
 SDDH:   SD transfer source address (high byte), divided by 4
+
         | xxxx xDDD | (Only lower three bits are used)
 
 SDDIR:  SD pin direction registers
 
 PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.k
+
+NTYPE:  Defines the type of NAND
+
+        | ???? S??? |
+            S = SLC size, with 0=512 bytes and 1=256 bytes
 
 NCMD:   NAND command.  The command to send comes from this table:
 
@@ -137,6 +267,10 @@ NCMD:   NAND command.  The command to send comes from this table:
     135 | Write 527 bytes without any CMDs
     175 | Write 527 bytes with an address
 
+NSRCL:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
+
+NSRCH:  Source address for NAND transfers, high byte.
+
 NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
 As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.  The data it stores is not the actual NAND ID.
 
@@ -144,6 +278,8 @@ As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.
 ACC:    Accumulator
 
 B:      Scratch register.  Used for multiply/divide operations.
+
+RAND:   Appears to be a random number (but may be a counter of some sort)
 
 
 The DPL+DPH combination form the address that's read by the DPTR register.
