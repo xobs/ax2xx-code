@@ -172,9 +172,9 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A0  | NTYPE | NCMD  | NSRCL | NSRCH |       |       | ER00  | ER01  |
+     A0  | NSTAT | NCMD  | NSRCL | NSRCH |       |       | ER00  | ER01  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A8  |  IE   |       |       | NADD0 | NADDE | NADD2 | NADD3 | NADD4 |
+     A8  |  IE   | NTYP1 | NTYP2 | NADD0 | NADDE | NADD2 | NADD3 | NADD4 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B0  |       | RAND  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -249,33 +249,42 @@ SDDIR:  SD pin direction registers
 
 PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.k
 
-NTYPE:  Defines the type of NAND
+NSTAT:  Defines the type of NAND
 
         | ???? S??? |
             S = SLC size, with 0=512 bytes and 1=256 bytes
 
 NCMD:   NAND command.  The command to send comes from this table:
 
-        | ???? ?CCC |
+        | WR?? ?CCC |
             C = Command, from the table below
+            R = command is a read
+            W = command is a write
+
+        Note: Setting R and W together will crash the card
 
     CMD | Result
     ----+-------------------------
       0 | nop
       1 | nop
       2 | Read ID (CLE 0x90 / ALE 0x00 / read)
-      3 | Read 528 bytes and crash the card
+      3 | Read 528 bytes
       4 | CMD 0x60 / [4 addrs] / 0xd0
       5 | CMD 0x80 / [4 addrs] / write 528 bytes
       6 | CMD 0x70
       7 | nop
-     71 | Read data and then crash
-    135 | Write 527 bytes without any CMDs
-    175 | Write 527 bytes with an address
+   0x47 | Read 527 bytes without any CMDs
+   0x87 | Write 527 bytes without any CMDs
+   0x6f | CMD [NTYP1] / [4 addrs] / read 527 bytes
+   0xaf | CMD [NTYP1] / [4 addrs] / read 527 bytes
 
 NSRCL:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
 
 NSRCH:  Source address for NAND transfers, high byte.
+
+NTYP1:  Used in some "read" operations as the initial command type.
+
+NTYP2:  Used in some "read" operations as the final command type.
 
 NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
 As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.  The data it stores is not the actual NAND ID.
@@ -300,6 +309,30 @@ The contents of the SFRs when the program is first loaded is:
     80 ec 00 00 00 00 00 00  e8 bd bd df 00 00 00 00
     3f 00 00 00 78 07 00 00  80 00 87 ff 00 00 00 00
     48 ff 00 2c 00 3f 00 00  14 fe ff ff 00 00 00 00
+
+
+NAND Storage
+------------
+
+The initial boot code is protected with a very robust error correction
+algorithm.  Every 512-bytes is protected by both a 16-bit CRC16 and a
+108-bit ECC of some sort (likely BCH).
+
+At the end of a 512-byte block there will be 16 bytes of ECC data.  For
+example, the following pattern was observed after a 512-byte block
+consisting entirely of 0xff:
+
+    00000200  7f a1 8e be 74 9d 5f 07  d7 f6 d1 81 12 59 5e f9 |....t._......Y^.|
+
+Bytes 0 and 1 are the result of a CRC16 across the entire field.  The CRC16
+of 512 bytes of 0xff is 0x7fa1.
+
+Byte 2 serves dual-purpose.  The lower nybble is fixed to the value "0xe"
+for reasons that are not yet clear.
+
+The upper nybble of byte 2, along with the remaining 13 bytes are all ECC
+data.
+
 
 
 Using the Interactive Debugger
