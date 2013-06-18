@@ -29,6 +29,10 @@
 
 .equ    LED_STATE, 0x40
 
+.equ    NCMD, 0xa1
+.equ    NSRCL, 0xa2
+.equ    NSRCH, 0xa3
+
 .equ    SD_WAITING, 0x24
 
 .org 0x2900
@@ -253,9 +257,9 @@ cmd_jump:
         sjmp    xmit_response
 
 cmd_nand:
-        mov     0xa2, #0x5
-        mov     0xa3, #0x0
-        mov     0xa1, 0x20
+        mov     NSRCL, 0x21
+        mov     NSRCH, 0x22
+        mov     NCMD, 0x20
         mov     0x20, #1
         mov     0x21, #2
         mov     0x22, #3
