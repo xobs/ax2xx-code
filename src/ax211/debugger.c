@@ -23,6 +23,7 @@ struct dbg {
 
     int                 read_sfr_offset;
     int                 write_sfr_offset;
+    int                 ext_op_offset;
 };
 
 /* These are SD commands as they get sent to the card */
@@ -35,6 +36,7 @@ enum protocol_code {
     cmd_nand = 5,
     cmd_sfr_set = 6,
     cmd_sfr_get = 7,
+    cmd_ext_op  = 8,
 };
 
 struct debug_command {
@@ -57,6 +59,7 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_reset(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
     {
@@ -143,6 +146,15 @@ static struct debug_command debug_commands[] = {
                 ,
     },
     {
+        .name = "extop",
+        .func = dbg_do_ext_op,
+        .desc = "Execute an extended opcode on the chip",
+        .help = "Usage: extop [opcode]    or   extop [op1] [op2]\n"
+                "   Extended opcodes are one or two bytes.  Two-byte opcodes \n"
+                "   have the upper nybble of op1 set as 0xf0, e.g. 0xf5 0x61\n"
+                ,
+    },
+    {
         .name = "reset",
         .func = dbg_do_reset,
         .desc = "Reset the AX211 card",
@@ -204,6 +216,35 @@ int dbg_poke(struct dbg *dbg, int offset, uint8_t val) {
     return bfr[0];
 }
     
+
+static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
+    uint8_t op1;
+    uint8_t op2;
+    uint8_t cmd[4];
+    uint8_t bfr[5];
+    int ret;
+
+    if (argc < 2) {
+        printf("Usage: %s op1 [op2]\n", argv[0]);
+        return -EINVAL;
+    }
+
+    op1 = strtoul(argv[1], NULL, 0);
+    op2 = 0x00; // nop opcode
+    if (argc > 2) {
+        op2 = strtoul(argv[2], NULL, 0);
+        op1 |= 0xf0;
+    }
+
+    dbg_poke(dbg, dbg->ext_op_offset, 0xa5);
+    dbg_poke(dbg, dbg->ext_op_offset+1, op1);
+    dbg_poke(dbg, dbg->ext_op_offset+2, op2);
+
+    memset(cmd, 0, sizeof(cmd));
+    ret = dbg_txrx(dbg, cmd_ext_op, cmd, bfr, sizeof(bfr));
+
+    return ret;
+}
 
 static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
     int ch;
@@ -580,6 +621,7 @@ static int find_fixups(struct dbg *dbg) {
     int ret = 0;
     int found_sfr_get = 0;
     int found_sfr_set = 0;
+    int found_ext_op = 0;
 
     printf("Locating fixup hooks... "); fflush(stdout);
     ret = dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
@@ -606,6 +648,12 @@ static int find_fixups(struct dbg *dbg) {
             dbg_poke(dbg, 0x2900+i+1, 0x20);  // Source register
             dbg->write_sfr_offset = 0x2900+i+2;
         }
+        if (program_memory[i] == 0xa5
+            && program_memory[i+1] == 0x64
+            && program_memory[i+2] == 0x65) {
+            found_ext_op = 1;
+            dbg->ext_op_offset = 0x2900+i;
+        }
     }
 
     if (!found_sfr_get) {
@@ -615,6 +663,10 @@ static int find_fixups(struct dbg *dbg) {
     if (!found_sfr_set) {
         ret = -ERANGE;
         printf(" [couldn't find sfr_set opcodes] ");
+    }
+    if (!found_ext_op) {
+        ret = -ERANGE;
+        printf(" [couldn't find ext_op opcodes] ");
     }
     printf("Done\n");
     return ret;

@@ -185,7 +185,9 @@ not_c05:cjne    A, #0x06, not_c06
         ajmp    cmd_sfr_set
 not_c06:cjne    A, #0x07, not_c07
         ajmp    cmd_sfr_get
-not_c07:ajmp    cmd_error
+not_c07:cjne    A, #0x08, not_c08
+        ajmp    cmd_ext_op
+not_c08:ajmp    cmd_error
 
 ; Send a 'hello' packet
 cmd_hello:
@@ -201,11 +203,11 @@ cmd_null:
         mov     0x21, #0
         mov     0x22, #0
         mov     0x23, #0
-        sjmp    xmit_response
+        ajmp    xmit_response
 
 ; Send an echo back
 cmd_echo:
-        sjmp    xmit_response
+        ajmp    xmit_response
 
 ; Peek at an area of memory
 cmd_peek:
@@ -271,6 +273,14 @@ cmd_sfr_get:
 cmd_sfr_set:
         ; This will get replaced by "mov    [SFR], 0x20" at runtime
         .db     0xa5, 0x62, 0x63
+        mov     0x21, #0
+        mov     0x22, #0
+        mov     0x23, #0
+        sjmp    xmit_response
+
+cmd_ext_op:
+        .db     0xa5, 0x64, 0x65
+        mov     0x20, #0
         mov     0x21, #0
         mov     0x22, #0
         mov     0x23, #0
