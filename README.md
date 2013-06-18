@@ -256,27 +256,39 @@ NSTAT:  Defines the type of NAND
 
 NCMD:   NAND command.  The command to send comes from this table:
 
-        | WR?? ?CCC |
-            C = Command, from the table below
-            R = command is a read
-            W = command is a write
+        | WRA2 1CCC |
+            W - command is a write
+            R - command is a read
+            A - If set, sends a four-byte "Address" field
+            2 - Add a fifth "Address" byte and add a post-address command
+            1 - Send an initial command byte
+            C - Command, from the table below
 
-        Note: Setting R and W together will crash the card
+        Note: Setting R and W together will crash the card.  If neither is
+        set, then neither a read nor a write is performed, but the command
+        will still be sent.
 
-    CMD | Result
-    ----+-------------------------
-      0 | nop
-      1 | nop
-      2 | Read ID (CLE 0x90 / ALE 0x00 / read)
-      3 | Read 528 bytes
-      4 | CMD 0x60 / [4 addrs] / 0xd0
-      5 | CMD 0x80 / [4 addrs] / write 528 bytes
-      6 | CMD 0x70
-      7 | nop
-   0x47 | Read 527 bytes without any CMDs
-   0x87 | Write 527 bytes without any CMDs
-   0x6f | CMD [NTYP1] / [4 addrs] / read 527 bytes
-   0xaf | CMD [NTYP1] / [4 addrs] / read 527 bytes
+        Note: If "W" or "R" are set, then an initial "CLE" is set, and "2"
+        has no effect.
+
+        Note: If sending "A" and "2" but not "W" or "R", then the engine
+        will send one command and five address bytes, but no second command
+        byte.
+
+     CMD | Result
+     ----+-------------------------
+       0 | nop
+       1 | nop
+       2 | Read ID (CLE 0x90 / ALE 0x00 / read)
+       3 | Read 528 bytes
+       4 | CMD 0x60 / [4 addrs] / 0xd0
+       5 | CMD 0x80 / [4 addrs] / write 528 bytes
+       6 | CMD 0x70
+       7 | nop
+    0x47 | Read 527 bytes without any CMDs
+    0x87 | Write 527 bytes without any CMDs
+    0x6f | CMD [NTYP1] / [4 addrs] / read 527 bytes
+    0xaf | CMD [NTYP1] / [4 addrs] / read 527 bytes
 
 NSRCL:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
 
