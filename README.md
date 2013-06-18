@@ -51,7 +51,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      A0  |       | NCMD  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A8  |  IE   |       |       |       |       |       |       |       |
+     A8  |  IE   |       |       | NADD0 | NADDE | NADD2 | NADD3 | NADD4 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B0  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -67,7 +67,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E0  |  ACC  |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     E8  |       |       |       | SDDIR |       |       |       |       |
+     E8  |       |       | N???? | SDDIR |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F0  |   B   |       |       |       |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -98,12 +98,14 @@ SDI1..4: Register values R1..R4 from the SD command
 SDCMD:  The number of the command that was sent (without start bit).  E.g. if the first byte was 0x42, then SDCMD would equal 0x02.
 
 SDSM:   SD state machine state.
+
         | ???? AA?X |
             A - If 0, then the state machine is idle
 
 SDBL:   SD transfer bytes (low byte), minus one
 
 SDBH:   SD transfer bytes (high byte), minus one
+
         | ???? ???h |
             h = "high bit of address"
 
@@ -114,9 +116,30 @@ SDDH:   SD transfer source address (high byte), divided by 4
 
 SDDIR:  SD pin direction registers
 
-PORT1:  GPIO for the NAND port.
+PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.k
 
 NCMD:   NAND command.  The command to send comes from this table:
+
+        | ???? ?CCC |
+            C = Command, from the table below
+
+    CMD | Result
+    ----+-------------------------
+      0 | nop
+      1 | nop
+      2 | Read ID (CLE 0x90 / ALE 0x00 / read)
+      3 | Read 528 bytes and crash the card
+      4 | CMD 0x60 / [4 addrs] / 0xd0
+      5 | CMD 0x80 / [4 addrs] / write 528 bytes
+      6 | CMD 0x70
+      7 | nop
+     71 | Read data and then crash
+    135 | Write 527 bytes without any CMDs
+    175 | Write 527 bytes with an address
+
+NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
+As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.  The data it stores is not the actual NAND ID.
+
 
 ACC:    Accumulator
 

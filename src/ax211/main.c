@@ -308,13 +308,16 @@ static int do_validate_file(struct sd_state *state) {
 
 
 static int do_debugger(struct sd_state *state, char *filename) {
+    int ret;
+    do {
+        if (load_and_enter_debugger(state, filename))
+            return 1;
+        printf("Loaded debugger\n");
 
-    if (load_and_enter_debugger(state, filename))
-        return 1;
-    printf("Loaded debugger\n");
 
-
-    return dbg_main(state);
+        ret = dbg_main(state);
+    } while (ret == -EAGAIN);
+    return ret;
 }
 
 

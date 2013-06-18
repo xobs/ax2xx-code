@@ -93,8 +93,7 @@ exit_sdi_isr:
         reti
 ; ---------------------------------------------------------------------------
 
-
-; Point the ISR stored in DPTR to address 0x293f
+; Point the ISR stored in DPTR to address 0x2920
 ; DPTR [in]: Address of the ISR to set
 set_isr:
         mov     A, #0x02
@@ -156,6 +155,14 @@ setup:
         lcall   set_isr
         mov     DPTR, #0x0203
         lcall   set_isr
+
+        ; Make IRQ2 and IRQ3 simply "reti"
+        mov     DPTR, #0x0206   ; IRQ2
+        mov     A, #0x32        ; reti instruction
+        movx    @DPTR, A
+        mov     DPTR, #0x0209   ; IRQ3
+        movx    @DPTR, A
+
         acall   setup_sdport
 
         ret

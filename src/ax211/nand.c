@@ -18,6 +18,21 @@ struct nand_state {
     int res;
 };
 
+struct nand_event {
+    uint8_t data;
+    uint8_t ctrl;
+    uint8_t unk[2];
+    struct timespec ts;
+} __attribute__((__packed__));
+
+enum nand_ctrl_pins {
+    nand_ctrl_ale = 0x1,
+    nand_ctrl_cle = 0x2,
+    nand_ctrl_re  = 0x4,
+    nand_ctrl_we  = 0x8,
+    nand_ctrl_cs  = 0x10,
+};
+
 struct nand_state *nand_init(void) {
     struct nand_state *n;
 
@@ -86,34 +101,15 @@ int nand_log_is_full(struct nand_state *n) {
 }
 
 
-
-static void trace_printline(int num, uint8_t data, uint8_t ctrl, uint32_t nsec, uint32_t sec) {
-    int i = num;
-    printf( "Packet %6d: ", i );
-    if( ctrl & 0x1 )
-        printf( " ALE" );
-    else
-        printf( " " );
-    if(ctrl & 0x2)
-        printf( " CLE" );
-    else
-        printf( " " );
-    if((ctrl & 0x4) == 0)
-        printf( " WE" );
-    else
-        printf( " " );
-    if((ctrl & 0x8) == 0)
-        printf( " RE" );
-    else
-        printf( " " );
-    if((ctrl & 0x10) == 0)
-        printf( " CS" );
-    else
-        printf( " " );
-
-    printf( " %02x . %u.%u\n", data, sec, nsec );
-
-    i++;
+static void trace_printline(int num, struct nand_event *evt) {
+    printf("Packet %6d: %4s %4s %4s %4s %4s %02x . %lu.%lu\n",
+            num,
+            evt->ctrl&nand_ctrl_ale?"ALE":"",
+            evt->ctrl&nand_ctrl_cle?"CLE":"",
+            evt->ctrl&nand_ctrl_we ?"WE" :"",
+            evt->ctrl&nand_ctrl_re ?"RE" :"",
+            evt->ctrl&nand_ctrl_cs ?"CS" :"",
+            evt->data, evt->ts.tv_sec, evt->ts.tv_nsec);
 }
 
 int nand_log_dump(struct nand_state *n) {
@@ -121,18 +117,14 @@ int nand_log_dump(struct nand_state *n) {
     int i;
     int line=0;
     int burstaddr = 0;
-    unsigned int data;
     int offset;
     unsigned int rv;
     unsigned int arg = 0;
-    unsigned char d;
-    unsigned char unk[2];
-    unsigned char ctrl;
-    unsigned int sec, nsec;
-    unsigned char buf[12];
     unsigned int log_start;
     unsigned int records;
+    int to_print;
     int verbose;
+    struct nand_event evt;
 
     records = nand_log_count(n);
     verbose = 1;
@@ -144,26 +136,28 @@ int nand_log_dump(struct nand_state *n) {
     eim_set(fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
     eim_set(fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
 
-    printf( "dumping %u records", records );
-    if( verbose )
+    to_print = records;
+    printf("dumping %u record%s", to_print, to_print==1?"":"s");
+    if (verbose)
         printf( "\n" );
 
-    while( burstaddr < (records * LOGENTRY_LEN / FIFOWIDTH + log_start) ) {
+    while (burstaddr < (records * LOGENTRY_LEN / FIFOWIDTH + log_start)) {
         arg = ((DDR3_FIFODEPTH - 1) << 4) | 1;
         eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
         arg |= 0x8;
         eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
         arg &= ~0x8;
         eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
-        for( i = 0; i < DDR3_FIFODEPTH; i++ ) {
-            while( (eim_get(fpga_r_ddr3_p3_stat) & 4) ) {
+        for (i = 0; i < DDR3_FIFODEPTH; i++) {
+            uint32_t raw_pkt;
+            while ((eim_get(fpga_r_ddr3_p3_stat) & 4)) {
                 putchar('i'); fflush(stdout);// wait for queue to become full before reading
             }
             rv = eim_get(fpga_r_ddr3_p3_ldat);
-            data = ((unsigned int) rv) & 0xFFFF;
+            raw_pkt = ((uint32_t) rv) & 0xFFFF;
             rv = eim_get(fpga_r_ddr3_p3_hdat);
-            data |= (rv << 16);
-            readback[i] = data;
+            raw_pkt |= (rv << 16);
+            readback[i] = raw_pkt;
         }
 
         while( !(eim_get(fpga_r_ddr3_p3_stat) & 0x4) ) {
@@ -172,27 +166,22 @@ int nand_log_dump(struct nand_state *n) {
             eim_set(fpga_w_ddr3_p3_ren, 0x00);
         }
         for( i = 0; i < DDR3_FIFODEPTH; i += 2 ) {
-            d = readback[i] & 0xFF;
-            ctrl = (readback[i] >> 8) & 0x1F; // control is already lined up by FPGA mapping
-            unk[0] = ((readback[i] >> 13) & 0xFF);
-            unk[1] = ((readback[i] >> 21) & 0x3);
+            evt.data = readback[i] & 0xFF;
+            evt.ctrl = (readback[i] >> 8) & 0x1F; // control is already lined up by FPGA mapping
+            evt.unk[0] = ((readback[i] >> 13) & 0xFF);
+            evt.unk[1] = ((readback[i] >> 21) & 0x3);
 
             // now prepare nsec, sec values:
             // bits 31-23 are LSB of nsec
             // 1111 1111 1_111 1111 . 1111 1111 1111 1111
-            nsec = ((readback[i+1] & 0x7FFFFF) << 9) | ((readback[i] >> 23) & 0x1FF);
-            sec = (readback[i+1] >> 23) & 0x1FF;
-            buf[0] = d;
-            buf[1] = ctrl;
-            buf[2] = unk[0];
-            buf[3] = unk[1];
-            memcpy( buf+4, &nsec, 4 );
-            memcpy( buf+8, &sec, 4 );
+            evt.ts.tv_nsec = ((readback[i+1] & 0x7FFFFF) << 9) | ((readback[i] >> 23) & 0x1FF);
+            evt.ts.tv_sec = (readback[i+1] >> 23) & 0x1FF;
 //            if( (burstaddr + i + 1) < (records * LOGENTRY_LEN / FIFOWIDTH) )
-//                write(ofd, buf, sizeof(buf));
+//                write(ofd, &evt, sizeof(evt));
 
-            if( verbose )
-                trace_printline(line++, d, ctrl, nsec, sec);
+            if(verbose && to_print>0)
+                trace_printline(line++, &evt);
+            to_print--;
         }
         if( !verbose ) {
             if( (burstaddr % (1024 * 128)) == 0 ) {

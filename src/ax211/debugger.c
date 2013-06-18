@@ -17,6 +17,7 @@
 
 struct dbg {
     int                 should_quit;
+    int                 ret;
     struct sd_state     *sd;
     struct nand_state   *nand;
 
@@ -54,6 +55,7 @@ static int dbg_do_help(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_nand(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_reset(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
@@ -108,12 +110,23 @@ static struct debug_command debug_commands[] = {
                 "Usage: disasm [address] [bytes]\n",
     },
     {
+        .name = "ram",
+        .func = dbg_do_sfr,
+        .desc = "Manipulate internal RAM",
+        .help = "Usage: ram [-d] [-w ram:val] [-r ram]\n"
+                "   -d          Dump internal ram\n"
+                "   -w addr:val Set RAM [addr] to value [val]\n"
+                "   -r addr     Read RAM [addr]\n"
+                ,
+    },
+    {
         .name = "sfr",
         .func = dbg_do_sfr,
         .desc = "Manipulate special function registers",
-        .help = "Usage: sfr [-d] [-s sfr:val]\n"
+        .help = "Usage: sfr [-d] [-w sfr:val] [-r sfr]\n"
                 "   -d          Dump special function registers\n"
-                "   -s sfr:val  Set SFR [sfr] to value [val]\n"
+                "   -w sfr:val  Set SFR [sfr] to value [val]\n"
+                "   -r sfr      Read SFR [sfr]\n"
                 ,
     },
     {
@@ -128,6 +141,12 @@ static struct debug_command debug_commands[] = {
                 "   -v  Print NAND status\n"
                 "   -t  Test NAND command\n"
                 ,
+    },
+    {
+        .name = "reset",
+        .func = dbg_do_reset,
+        .desc = "Reset the AX211 card",
+        .help = "Call to reset/restart the AX211 CPU\n",
     },
     {
         .name = "help",
@@ -190,28 +209,37 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
     int ch;
     int sfr;
     uint8_t sfr_table[128];
-    while ((ch = getopt(argc, argv, "ds:")) != -1) {
+    int offset = 0;
+
+    if (!strcmp(argv[0], "sfr"))
+        offset = 0x80;
+
+    while ((ch = getopt(argc, argv, "dw:r:")) != -1) {
         switch(ch) {
             case 'd':
-                for (sfr=0x80; sfr<=0xff; sfr++) {
+                for (sfr=0; sfr<=127; sfr++) {
                     uint8_t cmd[4];
                     uint8_t bfr[5];
-                    dbg_poke(dbg, dbg->read_sfr_offset, sfr);
+                    dbg_poke(dbg, dbg->read_sfr_offset, sfr+offset);
                     memset(cmd, 0, sizeof(cmd));
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                    sfr_table[sfr-0x80] = bfr[0];
+                    sfr_table[sfr] = bfr[0];
                 }
-                print_hex_offset(sfr_table, sizeof(sfr_table), 0x80);
+                print_hex_offset(sfr_table, sizeof(sfr_table), offset);
                 break;
 
-            case 's': {
+            case 'w': {
                     uint8_t cmd[4];
                     uint8_t bfr[5];
                     char *endptr;
                     int sfr = strtoul(optarg, &endptr, 0);
                     int val;
-                    if (sfr<0x80 || sfr>0xff) {
+                    if (offset && (sfr<0x80 || sfr>0xff)) {
                         printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
+                        return -EINVAL;
+                    }
+                    if (!offset && (sfr<0x00 || sfr>0x7f)) {
+                        printf("Invalid RAM address.  RAM values go between 0x00 and 0x7f\n");
                         return -EINVAL;
                     }
                     if (!endptr) {
@@ -220,7 +248,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                     }
                     val = strtoul(endptr+1, NULL, 0);
 
-                    printf("Setting SFR_%02x -> %02x\n", sfr, val);
+                    printf("Setting %s_%02x -> %02x\n", offset?"SFR":"RAM", sfr, val);
 
                     dbg_poke(dbg, dbg->write_sfr_offset, sfr);
                     memset(cmd, 0, sizeof(cmd));
@@ -229,8 +257,27 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                 }
                 break;
 
+            case 'r': {
+                    uint8_t cmd[4];
+                    uint8_t bfr[5];
+                    sfr = strtoul(optarg, NULL, 0);
+                    if (offset && (sfr<0x80 || sfr>0xff)) {
+                        printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
+                        return -EINVAL;
+                    }
+                    if (!offset && (sfr<0x00 || sfr>0x7f)) {
+                        printf("Invalid RAM address.  RAM values go between 0x00 and 0x7f\n");
+                        return -EINVAL;
+                    }
+                    dbg_poke(dbg, dbg->read_sfr_offset, sfr);
+                    memset(cmd, 0, sizeof(cmd));
+                    dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                    printf("%s_%02x: %02x\n", offset?"SFR":"RAM", sfr, bfr[0]);
+                }
+                break;
+
             default:
-                printf("Usage: %s [-d] [-s sfr:val]\n", argv[0]);
+                printf("Usage: %s [-d] [-w offset:val] [-r offset]\n", argv[0]);
                 return -EINVAL;
         }
     }
@@ -293,12 +340,15 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
 
 static int dbg_read_ram(struct dbg *dbg, uint8_t *buf,
                         int offset, int count) {
+    int ret;
     while (count>0) {
         uint8_t args[4];
         uint8_t out[5];
         args[0] = (offset>>8)&0xff;
         args[1] = (offset>>0)&0xff;
-        dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
+        ret = dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
+        if (ret)
+            return ret;
         memcpy(buf, out, (count>4?4:count));
         buf+=4;
         offset+=4;
@@ -488,6 +538,11 @@ static int dbg_do_help(struct dbg *dbg, int argc, char **argv) {
     return 0;
 }
 
+static int dbg_do_reset(struct dbg *dbg, int argc, char **argv) {
+    dbg->should_quit = 1;
+    dbg->ret = -EAGAIN;
+    return 0;
+}
 
 
 
@@ -522,11 +577,16 @@ char **cmd_completion(const char *text, int start, int end) {
 static int find_fixups(struct dbg *dbg) {
     uint8_t program_memory[512];
     int i;
+    int ret = 0;
     int found_sfr_get = 0;
     int found_sfr_set = 0;
 
     printf("Locating fixup hooks... "); fflush(stdout);
-    dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
+    ret = dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
+    if (ret) {
+        printf("Failed\n");
+        return ret;
+    }
 
     for (i=0; i<sizeof(program_memory); i++) {
         // Special charachter for our detection.
@@ -548,12 +608,16 @@ static int find_fixups(struct dbg *dbg) {
         }
     }
 
-    if (!found_sfr_get)
+    if (!found_sfr_get) {
+        ret = -ERANGE;
         printf(" [couldn't find sfr_get opcodes] ");
-    if (!found_sfr_set)
+    }
+    if (!found_sfr_set) {
+        ret = -ERANGE;
         printf(" [couldn't find sfr_set opcodes] ");
+    }
     printf("Done\n");
-    return 0;
+    return ret;
 }
 
 
@@ -567,7 +631,8 @@ int dbg_main(struct sd_state *sd) {
     rl_attempted_completion_function = cmd_completion;
     rl_bind_key('\t', rl_complete);
 
-    find_fixups(&dbg);
+    if (find_fixups(&dbg))
+        return -EAGAIN;
 
     while (!dbg.should_quit) {
         char *cmd = readline(DBG_PROMPT);
@@ -626,5 +691,5 @@ int dbg_main(struct sd_state *sd) {
 
         wordfree(&cmdline);
     }
-    return 0;
+    return dbg.ret;
 }
