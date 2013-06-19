@@ -28,5 +28,6 @@ int nand_log_max_cmd_depth(struct nand *n);
 int nand_log_max_data_depth(struct nand *n);
 int nand_log_is_full(struct nand *n);
 int nand_log_dump(struct nand *n);
+int nand_log_summarize(struct nand *n);
 
 #endif /* __NAND_H__ */

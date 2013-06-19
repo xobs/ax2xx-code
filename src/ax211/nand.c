@@ -78,8 +78,8 @@ int nand_log_count(struct nand *n) {
     entries |= eim_get(fpga_r_log_entry_h) << 16;
 
     // The actual count is one less than the listed value.
-    if (entries)
-        entries--;
+//    if (entries)
+//        entries--;
     return entries;
 }
 
@@ -106,6 +106,84 @@ int nand_log_is_full(struct nand *n) {
 }
 
 
+
+// Dump the NAND log, and call func() for each encountered event.
+// Call func() at tne end with a NULL evt to terminate.
+static int nand_log_foreach(struct nand *n,
+                            int (*func)(struct nand *n,
+                                        struct nand_event *evt,
+                                        void *ctx),
+                            void *ctx) {
+    unsigned int readback[DDR3_FIFODEPTH];
+    int i;
+    int burstaddr = 0;
+    int offset;
+    unsigned int rv;
+    unsigned int arg = 0;
+    unsigned int log_start;
+    unsigned int records;
+    int to_print;
+    struct nand_event evt;
+
+    records = nand_log_count(n);
+
+    offset = 0x10; // accessing port 3 (read port)
+    burstaddr = 0x0F000000 / 4; // log starts at 16MB for non-sandisk version
+    log_start = 0x0F000000 / 4;
+
+    eim_set(fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
+    eim_set(fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
+
+    to_print = records;
+
+    while (burstaddr < (records * LOGENTRY_LEN / FIFOWIDTH + log_start)) {
+        arg = ((DDR3_FIFODEPTH - 1) << 4) | 1;
+        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
+        arg |= 0x8;
+        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
+        arg &= ~0x8;
+        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
+        for (i = 0; i < DDR3_FIFODEPTH; i++) {
+            uint32_t raw_pkt;
+            while ((eim_get(fpga_r_ddr3_p3_stat) & 4))
+                ;
+            rv = eim_get(fpga_r_ddr3_p3_ldat);
+            raw_pkt = ((uint32_t) rv) & 0xFFFF;
+            rv = eim_get(fpga_r_ddr3_p3_hdat);
+            raw_pkt |= (rv << 16);
+            readback[i] = raw_pkt;
+        }
+
+        while( !(eim_get(fpga_r_ddr3_p3_stat) & 0x4) ) {
+            eim_set(fpga_w_ddr3_p3_ren, 0x10);
+            eim_set(fpga_w_ddr3_p3_ren, 0x00);
+        }
+        for( i = 0; i < DDR3_FIFODEPTH; i += 2 ) {
+            evt.data = readback[i] & 0xFF;
+            evt.ctrl = (readback[i] >> 8) & 0x1F; // control is already lined up by FPGA mapping
+            evt.unk[0] = ((readback[i] >> 13) & 0xFF);
+            evt.unk[1] = ((readback[i] >> 21) & 0x3);
+
+            // now prepare nsec, sec values:
+            // bits 31-23 are LSB of nsec
+            // 1111 1111 1_111 1111 . 1111 1111 1111 1111
+            evt.ts.tv_nsec = ((readback[i+1] & 0x7FFFFF) << 9) | ((readback[i] >> 23) & 0x1FF);
+            evt.ts.tv_sec = (readback[i+1] >> 23) & 0x1FF;
+
+            if(to_print>0)
+                func(n, &evt, ctx);
+            to_print--;
+        }
+
+        burstaddr += DDR3_FIFODEPTH;
+        eim_set( fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
+        eim_set( fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
+    }
+    func(n, NULL, ctx);
+    return 0;
+}
+
+
 static int trace_printbuffer(struct nand *n) {
     if (!n->data_buffer_size)
         return 0;
@@ -125,25 +203,28 @@ static int trace_printbuffer(struct nand *n) {
 }
 
 
-static int trace_printline(struct nand *n, int num, struct nand_event *evt) {
+static int trace_printline(struct nand *n, struct nand_event *evt, void *ctx) {
+    int *num = ctx;
+
+    // End-of-stream
+    if (!evt)
+        return trace_printbuffer(n);
+
+    if (n->data_buffer_ctrl && (evt->ctrl != n->data_buffer_ctrl)) {
+        trace_printbuffer(n);
+        n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
+        n->data_buffer[n->data_buffer_size-1] = evt->data;
+    }
+
     // If it's a data packet, stuff it in a buffer
     if ((!(evt->ctrl&nand_ctrl_ale)) && (!(evt->ctrl&nand_ctrl_cle))) {
-        // If it's the same packet type as the last one, add on to the buffer
-        if (evt->ctrl == n->data_buffer_ctrl) {
-            n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
-            n->data_buffer[n->data_buffer_size-1] = evt->data;
-        }
-        // New buffer type
-        else {
-            trace_printbuffer(n);
-            n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
-            n->data_buffer[n->data_buffer_size-1] = evt->data;
-            n->data_buffer_ctrl = evt->ctrl;
-        }
+        n->data_buffer_ctrl = evt->ctrl;
+        n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
+        n->data_buffer[n->data_buffer_size-1] = evt->data;
     }
     else {
         printf("Packet %6d: %4s %4s %4s %4s %4s %02x . %lu.%lu\n",
-            num,
+            (*num)++,
             evt->ctrl&nand_ctrl_ale?"ALE":"",
             evt->ctrl&nand_ctrl_cle?"CLE":"",
             evt->ctrl&nand_ctrl_we ?"WE" :"",
@@ -154,92 +235,109 @@ static int trace_printline(struct nand *n, int num, struct nand_event *evt) {
     return 0;
 }
 
-static int trace_finish(struct nand *n) {
-    return trace_printbuffer(n);
+static char *event_types[] = {
+    "ADDR",
+    "COMMAND",
+    "READ",
+    "WRITE",
+    "UNKNOWN",
+};
+
+enum nand_event_type {
+    nand_address,
+    nand_command,
+    nand_read,
+    nand_write,
+    nand_unknown,
+};
+
+struct nand_summary_event {
+    enum nand_event_type type;
+    int count;
+    uint8_t data;
+};
+
+
+struct nand_summary {
+    uint8_t last_ctrl;
+    struct nand_summary_event **events;
+    int event_count;
+};
+
+static int summarize_add(struct nand *n, struct nand_event *evt, void *ctx) {
+    struct nand_summary *s = ctx;
+    // Print out summary
+    if (!evt) {
+        int i;
+        for (i=0; i<s->event_count; i++) {
+            if (i)
+                printf(", ");
+            if (s->events[i]->count>1)
+                printf("%s[%d]", event_types[s->events[i]->type], s->events[i]->count);
+            else if (s->events[i]->type == nand_command)
+                printf("%s %02x", event_types[s->events[i]->type], s->events[i]->data);
+            else
+                printf("%s", event_types[s->events[i]->type]);
+            free(s->events[i]);
+        }
+        return 0;
+    }
+
+    if (evt->ctrl == s->last_ctrl) {
+        s->events[s->event_count-1]->count++;
+        return 0;
+    }
+
+    s->events = realloc(s->events, sizeof(struct nand_summary_event *)*s->event_count+1);
+    s->events[s->event_count++] = malloc(sizeof(struct nand_summary_event));
+    s->last_ctrl = evt->ctrl;
+
+    memset(s->events[s->event_count-1], 0, sizeof(struct nand_summary_event));
+    s->events[s->event_count-1]->count = 1;
+    if ( 
+            (evt->ctrl&nand_ctrl_cle)
+        && !(evt->ctrl&nand_ctrl_ale)
+       )
+        s->events[s->event_count-1]->type = nand_command;
+    else if ( 
+           !(evt->ctrl&nand_ctrl_cle)
+        &&  (evt->ctrl&nand_ctrl_ale)
+       )
+        s->events[s->event_count-1]->type = nand_address;
+    else if ( 
+            (evt->ctrl&nand_ctrl_cle)
+        &&  (evt->ctrl&nand_ctrl_ale)
+       )
+        s->events[s->event_count-1]->type = nand_unknown;
+    else if ( 
+            (evt->ctrl&nand_ctrl_we)
+        && !(evt->ctrl&nand_ctrl_re)
+       )
+        s->events[s->event_count-1]->type = nand_write;
+    else if ( 
+           !(evt->ctrl&nand_ctrl_we)
+        &&  (evt->ctrl&nand_ctrl_re)
+       )
+        s->events[s->event_count-1]->type = nand_read;
+    else
+        s->events[s->event_count-1]->type = nand_unknown;
+
+    s->events[s->event_count-1]->data = evt->data;
+
+    return 0;
 }
 
+
 int nand_log_dump(struct nand *n) {
-    unsigned int readback[DDR3_FIFODEPTH];
-    int i;
-    int line=0;
-    int burstaddr = 0;
-    int offset;
-    unsigned int rv;
-    unsigned int arg = 0;
-    unsigned int log_start;
-    unsigned int records;
-    int to_print;
-    int verbose;
-    struct nand_event evt;
+    int num = 0;
+    return nand_log_foreach(n, trace_printline, &num);
+}
 
-    records = nand_log_count(n);
-    verbose = 1;
-
-    offset = 0x10; // accessing port 3 (read port)
-    burstaddr = 0x0F000000 / 4; // log starts at 16MB for non-sandisk version
-    log_start = 0x0F000000 / 4;
-
-    eim_set(fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
-    eim_set(fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
-
-    to_print = records;
-    printf("dumping %u record%s", to_print, to_print==1?"":"s");
-    if (verbose)
-        printf( "\n" );
-
-    while (burstaddr < (records * LOGENTRY_LEN / FIFOWIDTH + log_start)) {
-        arg = ((DDR3_FIFODEPTH - 1) << 4) | 1;
-        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
-        arg |= 0x8;
-        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
-        arg &= ~0x8;
-        eim_set(fpga_w_ddr3_p3_cmd, arg | PULSE_GATE_MASK);
-        for (i = 0; i < DDR3_FIFODEPTH; i++) {
-            uint32_t raw_pkt;
-            while ((eim_get(fpga_r_ddr3_p3_stat) & 4)) {
-                putchar('i'); fflush(stdout);// wait for queue to become full before reading
-            }
-            rv = eim_get(fpga_r_ddr3_p3_ldat);
-            raw_pkt = ((uint32_t) rv) & 0xFFFF;
-            rv = eim_get(fpga_r_ddr3_p3_hdat);
-            raw_pkt |= (rv << 16);
-            readback[i] = raw_pkt;
-        }
-
-        while( !(eim_get(fpga_r_ddr3_p3_stat) & 0x4) ) {
-            putchar('x'); fflush(stdout); // error, should be empty now
-            eim_set(fpga_w_ddr3_p3_ren, 0x10);
-            eim_set(fpga_w_ddr3_p3_ren, 0x00);
-        }
-        for( i = 0; i < DDR3_FIFODEPTH; i += 2 ) {
-            evt.data = readback[i] & 0xFF;
-            evt.ctrl = (readback[i] >> 8) & 0x1F; // control is already lined up by FPGA mapping
-            evt.unk[0] = ((readback[i] >> 13) & 0xFF);
-            evt.unk[1] = ((readback[i] >> 21) & 0x3);
-
-            // now prepare nsec, sec values:
-            // bits 31-23 are LSB of nsec
-            // 1111 1111 1_111 1111 . 1111 1111 1111 1111
-            evt.ts.tv_nsec = ((readback[i+1] & 0x7FFFFF) << 9) | ((readback[i] >> 23) & 0x1FF);
-            evt.ts.tv_sec = (readback[i+1] >> 23) & 0x1FF;
-//            if( (burstaddr + i + 1) < (records * LOGENTRY_LEN / FIFOWIDTH) )
-//                write(ofd, &evt, sizeof(evt));
-
-            if(verbose && to_print>0)
-                trace_printline(n, line++, &evt);
-            to_print--;
-        }
-        if( !verbose ) {
-            if( (burstaddr % (1024 * 128)) == 0 ) {
-                printf( "." );
-                fflush(stdout);
-            }
-        }
-
-        burstaddr += DDR3_FIFODEPTH;
-        eim_set( fpga_w_ddr3_p2_ladr + offset, ((burstaddr * 4) & 0xFFFF));
-        eim_set( fpga_w_ddr3_p2_hadr + offset, ((burstaddr * 4) >> 16) & 0xFFFF);
-    }
-    trace_finish(n);
+// print CMD / ADDR[x] / CMD[x] / DATA[x]
+int nand_log_summarize(struct nand *n) {
+    struct nand_summary s;
+    memset(&s, 0, sizeof(s));
+    nand_log_foreach(n, summarize_add, &s);
+    printf("\n");
     return 0;
 }
