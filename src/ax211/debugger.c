@@ -24,6 +24,8 @@ struct dbg {
     int             read_sfr_offset;
     int             write_sfr_offset;
     int             ext_op_offset;
+
+    int             initialized; // False if uninitialized
 };
 
 /* These are SD commands as they get sent to the card */
@@ -145,12 +147,13 @@ static struct debug_command debug_commands[] = {
         .name = "nand",
         .func = dbg_do_nand,
         .desc = "Operate on the NAND in some fashion",
-        .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-t cmd:addr]\n"
+        .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-c] [-t cmd:addr]\n"
                 "   -r  Reset NAND logging\n"
                 "   -l  Begin NAND logging\n"
                 "   -s  Stop NAND logging\n"
                 "   -d  Dump NAND events\n"
                 "   -v  Print NAND status\n"
+                "   -c  Try every possible NCMD value\n"
                 "   -t  Test NAND command.  Specify an address on the cmdline\n"
                 ,
     },
@@ -346,7 +349,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
 
 static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
     int ch;
-    while ((ch = getopt(argc, argv, "rlsdt:v")) != -1) {
+    while ((ch = getopt(argc, argv, "rlsdt:vc")) != -1) {
         switch(ch) {
             case 'r':
                 nand_log_reset(dbg->nand);
@@ -362,6 +365,37 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
 
             case 'd':
                 nand_log_dump(dbg->nand);
+                break;
+
+            case 'c': {
+                    uint8_t cmd[4];
+                    uint8_t bfr[5];
+                    uint32_t addr = 0x1000;
+                    int i;
+                    for (i=0; i<256; i++) {
+                        // Avoid setting "Write" and "Read" flags together
+                        if ((i&0x40) && (i&0x80))
+                            continue;
+
+                        dbg_poke(dbg, dbg->write_sfr_offset, 0xa9);
+                        cmd[0] = 0xa5;
+                        dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+
+                        dbg_poke(dbg, dbg->write_sfr_offset, 0xaa);
+                        cmd[0] = 0x5a;
+                        dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+
+                        memset(cmd, 0, sizeof(cmd));
+                        cmd[0] = i;
+                        cmd[1] = ((addr/8)>>0)&0xff;
+                        cmd[2] = ((addr/8)>>8)&0xff;
+                        nand_log_reset(dbg->nand);
+                        nand_log_enable(dbg->nand);
+                        dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+                        printf("NCMD 0x%02x: ", i);
+                        nand_log_summarize(dbg->nand);
+                    }
+                }
                 break;
 
             case 't': {
@@ -725,14 +759,22 @@ static int find_fixups(struct dbg *dbg) {
 
 
 int dbg_main(struct sd_state *sd) {
-    struct dbg dbg;
-    memset(&dbg, 0, sizeof(dbg));
+    static struct dbg dbg;
+
+    if (!dbg.initialized) {
+        memset(&dbg, 0, sizeof(dbg));
+
+        dbg.nand = nand_init();
+
+        rl_attempted_completion_function = cmd_completion;
+        rl_bind_key('\t', rl_complete);
+
+        dbg.initialized = 1;
+    }
 
     dbg.sd = sd;
-    dbg.nand = nand_init();
-
-    rl_attempted_completion_function = cmd_completion;
-    rl_bind_key('\t', rl_complete);
+    dbg.should_quit = 0;
+    dbg.ret = 0;
 
     if (find_fixups(&dbg))
         return -EAGAIN;
