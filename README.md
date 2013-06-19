@@ -53,14 +53,15 @@ DPTR (which is really made up of SFR 0x82 and 0x83, called DPL and DPH
 respectively) and either loading to the accumulator using "movx A, @DPTR" or
 storing from the accumulator using "movx @DPTR, A".
     * 0x0000 - 0x0006 is reserved somehow.  Contains 0x51 0x00 0x00 0x00 ...
-    * 0x0007 - 0x01ff is protected and returns 0xff
+    * 0x0007 - 0x01ff is protected and returns 0xff.  The CPU and NAND
+                      block can't read this range, but the SD block can.
     * 0x0200 - 0x2002 is interrupt vector 0 (SPI)
     * 0x0203 - 0x2005 is interrupt vector 1 (other SPI)
     * 0x0206 - 0x0208 is interrupt vector 2 (NAND)
     * 0x0209 - 0x020b is interrupt vector 3 (unknown)
-    * 0x020c - 0x02aff is general-purpose RAM
+    * 0x020c - 0x02af is general-purpose RAM
         * Code execution for APPO factory mode begins at offset 0x2900
-    * 0x2ba0 - 0x2bff contains something interesting; I'm not sure what
+    * 0x2ba0 - 0x2bff contains something interesting, and I'm not sure what
     * 0x2c00 - 0x3fff is read-only and contains zeroes
     * 0x0000 - 0x3fff is mirrored at 0x4000, 0x8000, and 0xc000
 
@@ -172,9 +173,9 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A0  | NSTAT | NCMD  | NSRCL | NSRCH |       |       | ER00  | ER01  |
+     A0  | NTYPE | NCMD  | NSRCL | NSRCH |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A8  |  IE   | NTYP1 | NTYP2 | NADD0 | NADD1 | NADD2 | NADD3 | NADD4 |
+     A8  |  IE   | NCMD1 | NCMD2 | NADD0 | NADD1 | NADD2 | NADD3 | NADD4 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B0  |       | RAND  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -190,7 +191,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E0  | ACC   |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     E8  |       |       | N???? | SDDIR |       |       |       |       |
+     E8  |       |       | NFMT  | SDDIR |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F0  | B     |       |       |       |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -206,7 +207,7 @@ DPH:    Data Pointer (high)
 IE:     Interrupt enable
 
         | Axxx 4321 |
-            A = all interrupts (0 - all interrupts disabled)
+            A - all interrupts (0 - all interrupts disabled)
             4 - enable/disable interrupt 4
             3 - enable/disable interrupt 3
             2 - enable/disable interrupt 2
@@ -218,10 +219,11 @@ SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear
             S = "start transfer" bit
             ABC = ? (maybe indicates 'CMD' bit?)
 
-N????:  Does weird things.
+NFMT:  NAND setup format
 
-        | ???? b??? |
-            b - When 0, NAND transfer doesn't work
+        | ??AA S??? |
+            A - Number of address bits. The number of ALE cycles is [AA]+2, e.g. if [AA] is 0, there will be two ALE cycles.
+            S - Transfer size.  0 for 256+8 bytes, 1 for 512+16 bytes.
 
 SDI1..4: Register values R1..R4 from the SD command
 
@@ -247,9 +249,9 @@ SDDH:   SD transfer source address (high byte), divided by 4
 
 SDDIR:  SD pin direction registers
 
-PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.k
+PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.
 
-NSTAT:  Defines the type of NAND
+NTYPE:  Defines the type of NAND
 
         | ???? S??? |
             S = SLC size, with 0=512 bytes and 1=256 bytes
@@ -257,46 +259,38 @@ NSTAT:  Defines the type of NAND
 NCMD:   NAND command.  The command to send comes from this table:
 
         | WRA2 1CCC |
-            W - command is a write
-            R - command is a read
-            A - If set, sends a four-byte "Address" field
-            2 - Add a fifth "Address" byte and add a post-address command
+            C - Simple command, from the table below
             1 - Send an initial command byte
-            C - Command, from the table below
+            2 - Add a post-address command after sending the address
+            A - Send ADDRs before performing read or write
+            W - Write data
+            R - Read data
 
         Note: Setting R and W together will crash the card.  If neither is
         set, then neither a read nor a write is performed, but the command
         will still be sent.
 
-        Note: If "W" or "R" are set, then an initial "CLE" is set, and "2"
-        has no effect.
+        Note: If "A" is not set, then "2" will have no effect.
 
-        Note: If sending "A" and "2" but not "W" or "R", then the engine
-        will send one command and five address bytes, but no second command
-        byte.
-
+    - Simple Command Table -
      CMD | Result
      ----+-------------------------
        0 | nop
-       1 | nop
-       2 | Read ID (CLE 0x90 / ALE 0x00 / read)
-       3 | Read 528 bytes
-       4 | CMD 0x60 / [4 addrs] / 0xd0
-       5 | CMD 0x80 / [4 addrs] / write 528 bytes
-       6 | CMD 0x70
-       7 | nop
-    0x47 | Read 527 bytes without any CMDs
-    0x87 | Write 527 bytes without any CMDs
-    0x6f | CMD [NTYP1] / [4 addrs] / read 527 bytes
-    0xaf | CMD [NTYP1] / [4 addrs] / read 527 bytes
+       1 | Reset: [CMD 0xff]
+       2 | Read ID: [CMD 0x90] / [ADDR 0x00] / READ[8]
+       3 | Read: [CMD 0x00] / [ADDRs] / READ[528]
+       4 | Erase: [CMD 0x60 / [ADDRs] / [CMD 0xd0]
+       5 | Write: [CMD 0x80] / [ADDRs] / WRITE[528] / [CMD 0x10]
+       6 | Status: [CMD 0x70] / READ
+       7 | Complex command (Use NCMD[3:7] for command description)
 
 NSRCL:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
 
 NSRCH:  Source address for NAND transfers, high byte.
 
-NTYP1:  Used in some "read" operations as the initial command type.
+NCMD1:  Used in some "read" operations as the initial command type.
 
-NTYP2:  Used in some "read" operations as the final command type.
+NCMD2:  Used in some "read" operations as the final command type.
 
 NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
 As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.  The data it stores is not the actual NAND ID.
