@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <errno.h>
+#include <arpa/inet.h>
 #include <wordexp.h>
 #include <string.h>
 #include <getopt.h>
@@ -126,35 +127,37 @@ static struct debug_command debug_commands[] = {
         .name = "ram",
         .func = dbg_do_sfr,
         .desc = "Manipulate internal RAM",
-        .help = "Usage: ram [-d] [-w ram:val] [-r ram]\n"
+        .help = "Usage: ram [-d] [-w ram:val] [-r ram] [-x ram]\n"
                 "   -d          Dump internal ram\n"
                 "   -w addr:val Set RAM [addr] to value [val]\n"
                 "   -r addr     Read RAM [addr]\n"
+                "   -x addr     Read 32-bit register [addr]\n"
                 ,
     },
     {
         .name = "sfr",
         .func = dbg_do_sfr,
         .desc = "Manipulate special function registers",
-        .help = "Usage: sfr [-d] [-w sfr:val] [-r sfr]\n"
+        .help = "Usage: sfr [-d] [-w sfr:val] [-r sfr] [-x sfr]\n"
                 "   -d          Dump special function registers\n"
                 "   -w sfr:val  Set SFR [sfr] to value [val]\n"
                 "   -r sfr      Read SFR [sfr]\n"
-                "   -x sfr      Read extended (double-wide) sfr\n"
+                "   -x sfr      Read extended (quad-wide-wide) sfr\n"
                 ,
     },
     {
         .name = "nand",
         .func = dbg_do_nand,
         .desc = "Operate on the NAND in some fashion",
-        .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-c] [-t cmd:addr]\n"
-                "   -r  Reset NAND logging\n"
-                "   -l  Begin NAND logging\n"
-                "   -s  Stop NAND logging\n"
-                "   -d  Dump NAND events\n"
-                "   -v  Print NAND status\n"
-                "   -c  Try every possible NCMD value\n"
-                "   -t  Test NAND command.  Specify an address on the cmdline\n"
+        .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-c] [-t cmd:addr] -w [src:addr]\n"
+                "   -r            Reset NAND logging\n"
+                "   -l            Begin NAND logging\n"
+                "   -s            Stop NAND logging\n"
+                "   -d            Dump NAND events\n"
+                "   -v            Print NAND status\n"
+                "   -c [reg]      Try every possible value in register [reg]\n"
+                "   -w [src:dst]  Write RAM at address [src] to NAND addr [addr]\n"
+                "   -t [type]     Test NAND command.  Specify an address on the cmdline\n"
                 ,
     },
     {
@@ -212,10 +215,12 @@ static int dbg_txrx(struct dbg *dbg, enum protocol_code code,
 }
 
 
-int dbg_poke(struct dbg *dbg, int offset, uint8_t val) {
+// Set a value in XRAM
+int xram_set(struct dbg *dbg, int offset, uint8_t val) {
     int src_lo, src_hi;
     uint8_t args[4];
     uint8_t bfr[5];
+
     src_hi = (offset>>8)&0xff;
     src_lo = (offset)&0xff;
 
@@ -227,7 +232,37 @@ int dbg_poke(struct dbg *dbg, int offset, uint8_t val) {
         return -1;
     return bfr[0];
 }
-    
+
+// Set a value in RAM (or SFR)
+static int ram_set(struct dbg *dbg, uint8_t offset, uint8_t val) {
+    uint8_t cmd[4];
+    uint8_t bfr[5];
+    xram_set(dbg, dbg->write_sfr_offset, offset);
+    cmd[0] = val;
+    return dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+}
+
+static int xram_get(struct dbg *dbg, uint8_t *buf,
+                        int offset, int count) {
+    int ret;
+    while (count>0) {
+        uint8_t args[4];
+        uint8_t out[5];
+        args[0] = (offset>>8)&0xff;
+        args[1] = (offset>>0)&0xff;
+        ret = dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
+        if (ret)
+            return ret;
+        memcpy(buf, out, (count>4?4:count));
+        buf+=4;
+        offset+=4;
+        count-=4;
+    }
+    return 0;
+}
+
+
+
 
 static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
     uint8_t op1;
@@ -248,9 +283,9 @@ static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
         op1 |= 0xf0;
     }
 
-    dbg_poke(dbg, dbg->ext_op_offset, 0xa5);
-    dbg_poke(dbg, dbg->ext_op_offset+1, op1);
-    dbg_poke(dbg, dbg->ext_op_offset+2, op2);
+    xram_set(dbg, dbg->ext_op_offset, 0xa5);
+    xram_set(dbg, dbg->ext_op_offset+1, op1);
+    xram_set(dbg, dbg->ext_op_offset+2, op2);
 
     memset(cmd, 0, sizeof(cmd));
     ret = dbg_txrx(dbg, cmd_ext_op, cmd, bfr, sizeof(bfr));
@@ -273,7 +308,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                 for (sfr=0; sfr<=127; sfr++) {
                     uint8_t cmd[4];
                     uint8_t bfr[5];
-                    dbg_poke(dbg, dbg->read_sfr_offset, sfr+offset);
+                    xram_set(dbg, dbg->read_sfr_offset, sfr+offset);
                     memset(cmd, 0, sizeof(cmd));
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
                     sfr_table[sfr] = bfr[0];
@@ -282,8 +317,6 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                 break;
 
             case 'w': {
-                    uint8_t cmd[4];
-                    uint8_t bfr[5];
                     char *endptr;
                     int sfr = strtoul(optarg, &endptr, 0);
                     int val;
@@ -303,10 +336,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
 
                     printf("Setting %s_%02x -> %02x\n", offset?"SFR":"RAM", sfr, val);
 
-                    dbg_poke(dbg, dbg->write_sfr_offset, sfr);
-                    memset(cmd, 0, sizeof(cmd));
-                    cmd[0] = val;
-                    dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+                    ram_set(dbg, sfr, val);
                 }
                 break;
 
@@ -323,18 +353,31 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                         printf("Invalid RAM address.  RAM values go between 0x00 and 0x7f\n");
                         return -EINVAL;
                     }
-                    dbg_poke(dbg, dbg->read_sfr_offset, sfr);
+                    xram_set(dbg, dbg->read_sfr_offset, sfr);
                     memset(cmd, 0, sizeof(cmd));
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
                     if (ch == 'r') {
                         printf("%s_%02X: %02x\n", offset?"SFR":"RAM", sfr, bfr[0]);
                     }
                     else if (ch == 'x') {
-                        uint8_t lower = bfr[0];
-                        dbg_poke(dbg, dbg->read_sfr_offset, sfr+1);
-                        memset(cmd, 0, sizeof(cmd));
+                        uint8_t num[4];
+
+                        num[0] = bfr[0];
+
+                        xram_set(dbg, dbg->read_sfr_offset, sfr+1);
                         dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        printf("%s_%02X: %02x%02x\n", offset?"SFR":"RAM", sfr, bfr[0], lower);
+                        num[1] = bfr[0];
+
+                        xram_set(dbg, dbg->read_sfr_offset, sfr+2);
+                        dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                        num[2] = bfr[0];
+
+                        xram_set(dbg, dbg->read_sfr_offset, sfr+3);
+                        dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                        num[3] = bfr[0];
+
+                        printf("%s_%02X: %02x%02x%02x%02x\n", offset?"SFR":"RAM",
+                                sfr, num[3], num[2], num[1], num[0]);
                     }
                 }
                 break;
@@ -349,7 +392,10 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
 
 static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
     int ch;
-    while ((ch = getopt(argc, argv, "rlsdt:vc")) != -1) {
+    uint8_t cmd[4];
+    uint8_t bfr[5];
+    int ret = 0;
+    while ((ch = getopt(argc, argv, "rlsdt:vc:w:")) != -1) {
         switch(ch) {
             case 'r':
                 nand_log_reset(dbg->nand);
@@ -367,31 +413,54 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
                 nand_log_dump(dbg->nand);
                 break;
 
+            case 'w': {
+                    uint32_t src; // Source address in the AX211
+                    uint32_t dst; // Destination address in NAND
+                    uint8_t ram_buffer[512+3];
+                    int ram_bytes = sizeof(ram_buffer)-3;
+                    uint16_t crc;
+                    char *next;
+
+                    src = strtoul(optarg, &next, 0);
+                    dst = 0;
+                    if (next)
+                        dst = strtoul(next+1, NULL, 0);
+
+                    xram_get(dbg, ram_buffer, src, ram_bytes);
+                    crc = crc16(ram_buffer, ram_bytes);
+                    crc = htons(crc);
+                    memcpy(&ram_buffer[ram_bytes], &crc, sizeof(crc));
+                    ram_buffer[ram_bytes+2] = 0x0e;
+
+                    xram_set(dbg, src+ram_bytes+0, ram_buffer[ram_bytes+0]);
+                    xram_set(dbg, src+ram_bytes+1, ram_buffer[ram_bytes+1]);
+                    xram_set(dbg, src+ram_bytes+2, ram_buffer[ram_bytes+2]);
+
+                    cmd[0] = 5;
+                    cmd[1] = ((src/8)>>0)&0xff;
+                    cmd[2] = ((src/8)>>8)&0xff;
+                    nand_log_reset(dbg->nand);
+                    nand_log_enable(dbg->nand);
+                    ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+                    nand_log_dump(dbg->nand);
+                }
+                break;
+
             case 'c': {
-                    uint8_t cmd[4];
-                    uint8_t bfr[5];
                     uint32_t addr = 0x1000;
                     int i;
-                    for (i=0; i<256; i++) {
-                        // Avoid setting "Write" and "Read" flags together
-                        if ((i&0x40) && (i&0x80))
-                            continue;
+                    int sfr = strtoul(optarg, NULL, 0);
+                    for (i=255; i>=0; i--) {
 
-                        dbg_poke(dbg, dbg->write_sfr_offset, 0xa9);
-                        cmd[0] = 0xa5;
-                        dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
-
-                        dbg_poke(dbg, dbg->write_sfr_offset, 0xaa);
-                        cmd[0] = 0x5a;
-                        dbg_txrx(dbg, cmd_sfr_set, cmd, bfr, sizeof(bfr));
+                        ram_set(dbg, sfr, i);
 
                         memset(cmd, 0, sizeof(cmd));
-                        cmd[0] = i;
+                        cmd[0] = 0xaf;
                         cmd[1] = ((addr/8)>>0)&0xff;
                         cmd[2] = ((addr/8)>>8)&0xff;
                         nand_log_reset(dbg->nand);
                         nand_log_enable(dbg->nand);
-                        dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+                        ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
                         printf("NCMD 0x%02x: ", i);
                         nand_log_summarize(dbg->nand);
                     }
@@ -399,8 +468,6 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
                 break;
 
             case 't': {
-                    uint8_t cmd[4];
-                    uint8_t bfr[5];
                     uint32_t addr = 0;
                     char *addr_str;
                     memset(cmd, 0, sizeof(cmd));
@@ -411,7 +478,7 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
                     cmd[2] = (addr>>8)&0xff;
                     nand_log_reset(dbg->nand);
                     nand_log_enable(dbg->nand);
-                    dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+                    ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
                     nand_log_dump(dbg->nand);
                 }
                 break;
@@ -433,29 +500,8 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
                 break;
         }
     }
-    return 0;
+    return ret;
 }
-
-static int dbg_read_ram(struct dbg *dbg, uint8_t *buf,
-                        int offset, int count) {
-    int ret;
-    while (count>0) {
-        uint8_t args[4];
-        uint8_t out[5];
-        args[0] = (offset>>8)&0xff;
-        args[1] = (offset>>0)&0xff;
-        ret = dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
-        if (ret)
-            return ret;
-        memcpy(buf, out, (count>4?4:count));
-        buf+=4;
-        offset+=4;
-        count-=4;
-    }
-    return 0;
-}
-
-
 
 static int dbg_do_hello(struct dbg *dbg, int argc, char **argv) {
     uint8_t args[4];
@@ -503,7 +549,7 @@ static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv) {
         return -errno;
     }
 
-    dbg_read_ram(dbg, ram, 0, sizeof(ram));
+    xram_get(dbg, ram, 0, sizeof(ram));
     write(fd, ram, sizeof(ram));
     close(fd);
 
@@ -542,7 +588,7 @@ static int dbg_do_peek(struct dbg *dbg, int argc, char **argv) {
     }
 
     uint8_t bfr[cnt+1];
-    dbg_read_ram(dbg, bfr, src, cnt);
+    xram_get(dbg, bfr, src, cnt);
     print_hex_offset(bfr, cnt, src);
 
     return 0;
@@ -567,7 +613,7 @@ static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv) {
     }
 
     uint8_t bfr[count];
-    ret = dbg_read_ram(dbg, bfr, offset, count);
+    ret = xram_get(dbg, bfr, offset, count);
     if (ret)
         return ret;
 
@@ -599,7 +645,7 @@ static int dbg_do_memset(struct dbg *dbg, int argc, char **argv) {
     }
 
     while (count--)
-        dbg_poke(dbg, offset++, pattern);
+        xram_set(dbg, offset++, pattern);
     return 0;
 }
 
@@ -616,7 +662,7 @@ static int dbg_do_poke(struct dbg *dbg, int argc, char **argv) {
 
     offset = strtoul(argv[1], NULL, 0);
     value = strtoul(argv[2], NULL, 0);
-    old_value = dbg_poke(dbg, offset, value);
+    old_value = xram_set(dbg, offset, value);
     printf("Offset 0x%04x 0x%02x -> 0x%02x\n", offset, old_value, value);
     return 0;
 }
@@ -709,7 +755,7 @@ static int find_fixups(struct dbg *dbg) {
     int found_ext_op = 0;
 
     printf("Locating fixup hooks... "); fflush(stdout);
-    ret = dbg_read_ram(dbg, program_memory, 0x2900, sizeof(program_memory));
+    ret = xram_get(dbg, program_memory, 0x2900, sizeof(program_memory));
     if (ret) {
         printf("Failed\n");
         return ret;
@@ -721,16 +767,16 @@ static int find_fixups(struct dbg *dbg) {
             && program_memory[i+1] == 0x60
             && program_memory[i+2] == 0x61) {
             found_sfr_get = 1;
-            dbg_poke(dbg, 0x2900+i, 0x85);  // mov
+            xram_set(dbg, 0x2900+i, 0x85);  // mov
             dbg->read_sfr_offset = 0x2900+i+1;
-            dbg_poke(dbg, 0x2900+i+2, 0x20);  // Destination register
+            xram_set(dbg, 0x2900+i+2, 0x20);  // Destination register
         }
         if (program_memory[i] == 0xa5
             && program_memory[i+1] == 0x62
             && program_memory[i+2] == 0x63) {
             found_sfr_set = 1;
-            dbg_poke(dbg, 0x2900+i, 0x85);  // mov
-            dbg_poke(dbg, 0x2900+i+1, 0x20);  // Source register
+            xram_set(dbg, 0x2900+i, 0x85);  // mov
+            xram_set(dbg, 0x2900+i+1, 0x20);  // Source register
             dbg->write_sfr_offset = 0x2900+i+2;
         }
         if (program_memory[i] == 0xa5
