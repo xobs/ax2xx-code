@@ -90,6 +90,11 @@ provide additional instructions while retaining compatibility.
 
 0xa5 0x91 -> clear register ER2
 
+0x10 -> NOT C0C1
+0x11 -> CLR C0C1
+0x14 -> NOT C8C9
+0x15 -> CLR C8C9
+
          |   0   |   1   |   2   |   3   |   4   |   5   |   6   |   7   |
          |   8   |   9   |   A   |   B   |   C   |   D   |   E   |   F   |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -97,9 +102,9 @@ provide additional instructions while retaining compatibility.
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      08  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     10  |       |       |       |       |       |       |       |       |
+     10  | NOT32 | CLR32 | CLR32 |       | NOT32 | CLR32 | CLR32 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     18  |       |       |       |       |       |       |       |       |
+     18  | NOT32 | CLR32 | CLR32 |       | NOT32 | CLR32 | CLR32 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      20  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -129,9 +134,9 @@ provide additional instructions while retaining compatibility.
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      88  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     90  |       |       |       |       |       |       |       |       |
+     90  | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     98  |       |       |       |       |       |       |       |       |
+     98  | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 | REV32 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      A0  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -158,6 +163,19 @@ provide additional instructions while retaining compatibility.
      F8  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
 
+    NOT32: Invert the contents of the register.  Opcode:
+        | 0001 rr00 |
+            r - Extended Register number
+
+    CLR32: Clear the register to zero.
+        | 0001 rr01 |
+            r - Extended Register number
+
+    REV32: Reverse a register (e.g. 0b11000 -> 0b00011)
+        | 1001 ddss |
+            s - source register
+            d - destination register
+
 
 Special Function Registers
 --------------------------
@@ -165,9 +183,9 @@ Special Function Registers
          |   0   |   1   |   2   |   3   |   4   |   5   |   6   |   7   |
          |   8   |   9   |   A   |   B   |   C   |   D   |   E   |   F   |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     80  |       |  SP   |  DPL  |  DPH  |       |       |       |       |
+     80  | SDMOD |  SP   |  DPL  |  DPH  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     88  | SDOS  | SDI4  | SDI3  | SDI2  | SDI1  | SDCMD |       |       |
+     88  | SDOS  | SDI4  | SDI3  | SDI2  | SDI1  | SDCMD | IACK  |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      90  | SDSM  |       |       | SDBL  | SDBH  |       | SDDL  | SDDH  |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -181,13 +199,13 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B8  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     C0  | ER10  | ER11  |       |       |       |       |       |       |
+     C0  | ER00  | ER01  | ER02  | ER03  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     C8  | ER20  | ER21  |       |       |       |       |       |       |
+     C8  | ER10  | ER11  | ER12  | ER13  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      D0  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     D8  | ER30  | ER31  |       |       |       |       |       |       |
+     D8  | ER20  | ER21  | ER22  | ER23  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E0  | ACC   |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -195,8 +213,16 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F0  | B     |       | NPRE1 | NPRE2 |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     F8  |       |       |       |       |       |       |       |       |
+     F8  | ER30  | ER31  | ER32  | ER33  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
+
+SDMOD:  Mode of SD transfer.
+
+        | S??? CD?R |
+            R - ???
+            D - ???
+            C - ???
+            S - Size of data transfer.  0 for 1-bit, 1 for 4-bit.
 
 SP:     Stack Pointer
 
@@ -225,6 +251,14 @@ NFMT:  NAND setup format
 SDI1..4: Register values R1..R4 from the SD command
 
 SDCMD:  The number of the command that was sent (without start bit).  E.g. if the first byte was 0x42, then SDCMD would equal 0x02.
+
+IACK:   Clear the appropriate bit to acknowledge an IRQ
+
+        | xxxx 4321 |
+            4 - acknowledge interrupt 4
+            3 - acknowledge interrupt 3
+            2 - acknowledge interrupt 2
+            1 - acknowledge interrupt 1
 
 SDSM:   SD state machine state.
 
