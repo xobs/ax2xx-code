@@ -121,11 +121,10 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         int tries;
         // Actually enter factory mode (sends CMD63/APPO and waits for response)
         ret = -1;
-        for (tries=0; ret<0 && tries<10; tries++) {
+        for (tries=0; ret<0; tries++) {
             ret = sd_enter_factory_mode(state, 0);
             if (-1 == ret)
-                printf("Couldn't enter factory mode, trying again (%d/10)\n",
-                        tries+1);
+                printf("Couldn't enter factory mode, trying again\n");
         }
         // Couldn't enter factory mode, abort
         if (-1 == ret)
