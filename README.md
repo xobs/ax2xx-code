@@ -173,7 +173,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      98  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     A0  | NTYPE | NCMD  | NSRCL | NSRCH |       |       |       |       |
+     A0  | NTYPE | NCMD  | NRAML | NRAMH |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      A8  |  IE   | NCMD1 | NCMD2 | NADD0 | NADD1 | NADD2 | NADD3 | NADD4 |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -193,7 +193,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      E8  |       |       | NFMT  | SDDIR |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     F0  | B     |       |       |       |       |       | PORT1 |       |
+     F0  | B     |       | NPRE1 | NPRE2 |       |       | PORT1 |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      F8  |       |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -221,9 +221,6 @@ SDOS:   SD output state.  Write a "1" here to kick off a transfer.  There appear
 
 NFMT:  NAND setup format
 
-        | ??AA S??? |
-            A - Number of address bits. The number of ALE cycles is [AA]+2, e.g. if [AA] is 0, there will be two ALE cycles.
-            S - Transfer size.  0 for 256+8 bytes, 1 for 512+16 bytes.
 
 SDI1..4: Register values R1..R4 from the SD command
 
@@ -251,10 +248,15 @@ SDDIR:  SD pin direction registers
 
 PORT1:  GPIO for the NAND port.  When set to 0xff, drives pins high.
 
+NPRE1:  Send some form of this packet as a preamble
+
+NPRE2:  Determines whether or not to send the preamble
+
 NTYPE:  Defines the type of NAND
 
-        | ???? S??? |
-            S = SLC size, with 0=512 bytes and 1=256 bytes
+        | ??AA S??? |
+            A - Number of address bits. The number of ALE cycles is [AA]+2, e.g. if [AA] is 0, there will be two ALE cycles.
+            S - Transfer size.  0 for 256+8 bytes, 1 for 512+16 bytes.
 
 NCMD:   NAND command.  The command to send comes from this table:
 
@@ -284,16 +286,16 @@ NCMD:   NAND command.  The command to send comes from this table:
        6 | Status: [CMD 0x70] / READ
        7 | Complex command (Use NCMD[3:7] for command description)
 
-NSRCL:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
+NRAML:  Source address for NAND transfers.  Actual address is calculated as (SFR_A3<<8+SFR_A2)*8.
 
-NSRCH:  Source address for NAND transfers, high byte.
+NRAMH:  Source address for NAND transfers, high byte.
 
-NCMD1:  Used in some "read" operations as the initial command type.
+NCMD0:  Used in some operations as the initial command type.
 
-NCMD2:  Used in some "read" operations as the final command type.
+NCMD1:  Used in some operations as the final command type.
 
 NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
-As a special case, NCMD2 (read ID) seems to store some sort of data in NCMD0..4.  The data it stores is not the actual NAND ID.
+As a special case, NCMD2 (read ID) seems to store some sort of data in NADD0..4.  The data it stores is not the actual NAND ID.
 
 
 ACC:    Accumulator
