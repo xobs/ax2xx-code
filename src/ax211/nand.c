@@ -207,14 +207,16 @@ static int trace_printline(struct nand *n, struct nand_event *evt, void *ctx) {
     int *num = ctx;
 
     // End-of-stream
-    if (!evt)
-        return trace_printbuffer(n);
-
-    if (n->data_buffer_ctrl && (evt->ctrl != n->data_buffer_ctrl)) {
-        trace_printbuffer(n);
-        n->data_buffer = realloc(n->data_buffer, ++(n->data_buffer_size));
-        n->data_buffer[n->data_buffer_size-1] = evt->data;
+    if (!evt) {
+        // Drain the buffer if necessary
+        if (n->data_buffer)
+            return trace_printbuffer(n);
+        return 0;
     }
+
+    // If the packet type has changed, empty out the old buffer
+    if (n->data_buffer_ctrl && (evt->ctrl != n->data_buffer_ctrl))
+        trace_printbuffer(n);
 
     // If it's a data packet, stuff it in a buffer
     if ((!(evt->ctrl&nand_ctrl_ale)) && (!(evt->ctrl&nand_ctrl_cle))) {
@@ -280,6 +282,7 @@ static int summarize_add(struct nand *n, struct nand_event *evt, void *ctx) {
                 printf("%s", event_types[s->events[i]->type]);
             free(s->events[i]);
         }
+        free(s->events);
         return 0;
     }
 
