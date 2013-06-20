@@ -197,7 +197,7 @@ Special Function Registers
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      B0  |       | RAND  |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
-     B8  |       |       |       |       |       |       |       |       |
+     B8  | ER8   |       |       |       |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
      C0  | ER00  | ER01  | ER02  | ER03  |       |       |       |       |
     -----+-------+-------+-------+-------+-------+-------+-------+-------+
@@ -288,9 +288,10 @@ NPRE2:  Determines whether or not to send the preamble
 
 NTYPE:  Defines the type of NAND
 
-        | ??AA S??? |
-            A - Number of address bits. The number of ALE cycles is [AA]+2, e.g. if [AA] is 0, there will be two ALE cycles.
-            S - Transfer size.  0 for 256+8 bytes, 1 for 512+16 bytes.
+        | r?aa s??? |
+            s - Transfer size.  0 for 256+8 bytes, 1 for 512+16 bytes.
+            a - Number of address bits. The number of ALE cycles is [AA]+2, e.g. if [AA] is 0, there will be two ALE cycles.
+            r - 1 when the engine is running, 0 when it's idle
 
 NCMD:   NAND command.  The command to send comes from this table:
 
@@ -331,6 +332,9 @@ NCMD1:  Used in some operations as the final command type.
 NADD0..4: NAND address registers.  These define, in order, which address to specify when sending a NAND command.  These registers are reset after each NAND command that uses addresses.  For example, if you set NADD0..4 and then call NCMD6 (read status), this will not change the values of NADD0..4.
 As a special case, NCMD2 (read ID) seems to store some sort of data in NADD0..4.  The data it stores is not the actual NAND ID.
 
+ERxy:   Extended register [x], sub-byte [y].  These registers make up the four 32-bit registers that the ext_op code works on.
+
+ER8:    8-bit "A" register used for 32-bit opcodes.
 
 ACC:    Accumulator
 
