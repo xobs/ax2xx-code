@@ -148,14 +148,6 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
 
         rcvr_mmc_cmd(state, response, sizeof(response));
 
-        if (response[0] != 0x00 || response[1] != 0x41) {
-            printf("Result of factory mode: %d\n", ret);
-            print_hex(response, sizeof(response));
-            printf("Expected 0x00 0x00, got 0x%02x 0x%02x\n",
-                    response[0], response[1]);
-            continue;
-        }
-
         break;
     }
     return 0;
