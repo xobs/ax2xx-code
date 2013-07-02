@@ -94,6 +94,129 @@ int write_kernel_memory(long offset, long value, int virtualized, int size) {
 
 
 static int prep_eim(void) {
+  // set up pads to be mapped to EIM
+  for( i = 0; i < 16; i++ ) {
+    write_kernel_memory( 0x20e0114 + i*4, 0x0, 0, 4 );  // mux mapping
+    write_kernel_memory( 0x20e0428 + i*4, 0xb0b1, 0, 4 ); // pad strength config'd for a 100MHz rate 
+  }
+
+  // mux mapping
+  write_kernel_memory( 0x20e046c - 0x314, 0x0, 0, 4 ); // BCLK
+  write_kernel_memory( 0x20e040c - 0x314, 0x0, 0, 4 ); // CS0
+  write_kernel_memory( 0x20e0410 - 0x314, 0x0, 0, 4 ); // CS1
+  write_kernel_memory( 0x20e0414 - 0x314, 0x0, 0, 4 ); // OE
+  write_kernel_memory( 0x20e0418 - 0x314, 0x0, 0, 4 ); // RW
+  write_kernel_memory( 0x20e041c - 0x314, 0x0, 0, 4 ); // LBA
+  write_kernel_memory( 0x20e0468 - 0x314, 0x0, 0, 4 ); // WAIT
+  write_kernel_memory( 0x20e0408 - 0x314, 0x0, 0, 4 ); // A16
+  write_kernel_memory( 0x20e0404 - 0x314, 0x0, 0, 4 ); // A17
+  write_kernel_memory( 0x20e0400 - 0x314, 0x0, 0, 4 ); // A18
+
+  // pad strength
+  write_kernel_memory( 0x20e046c, 0xb0b1, 0, 4 ); // BCLK
+  write_kernel_memory( 0x20e040c, 0xb0b1, 0, 4 ); // CS0
+  write_kernel_memory( 0x20e0410, 0xb0b1, 0, 4 ); // CS1
+  write_kernel_memory( 0x20e0414, 0xb0b1, 0, 4 ); // OE
+  write_kernel_memory( 0x20e0418, 0xb0b1, 0, 4 ); // RW
+  write_kernel_memory( 0x20e041c, 0xb0b1, 0, 4 ); // LBA
+  write_kernel_memory( 0x20e0468, 0xb0b1, 0, 4 ); // WAIT
+  write_kernel_memory( 0x20e0408, 0xb0b1, 0, 4 ); // A16
+  write_kernel_memory( 0x20e0404, 0xb0b1, 0, 4 ); // A17
+  write_kernel_memory( 0x20e0400, 0xb0b1, 0, 4 ); // A18
+
+  write_kernel_memory( 0x020c4080, 0xcf3, 0, 4 ); // ungate eim slow clocks
+
+  // rework timing for sync use
+  // 0011 0  001 1   001    0   001 00  00  1  011  1    0   1   1   1   1   1   1
+  // PSZ  WP GBC AUS CSREC  SP  DSZ BCS BCD WC BL   CREP CRE RFL WFL MUM SRD SWR CSEN
+  //
+  // PSZ = 0011  64 words page size
+  // WP = 0      (not protected)
+  // GBC = 001   min 1 cycles between chip select changes
+  // AUS = 0     address shifted according to port size
+  // CSREC = 001 min 1 cycles between CS, OE, WE signals
+  // SP = 0      no supervisor protect (user mode access allowed)
+  // DSZ = 001   16-bit port resides on DATA[15:0]
+  // BCS = 00    0 clock delay for burst generation
+  // BCD = 00    divide EIM clock by 0 for burst clock
+  // WC = 1      write accesses are continuous burst length
+  // BL = 011    32 word memory wrap length
+  // CREP = 1    non-PSRAM, set to 1
+  // CRE = 0     CRE is disabled
+  // RFL = 1     fixed latency reads
+  // WFL = 1     fixed latency writes
+  // MUM = 1     multiplexed mode enabled
+  // SRD = 1     synch reads
+  // SWR = 1     synch writes
+  // CSEN = 1    chip select is enabled
+
+  //  write_kernel_memory( 0x21b8000, 0x5191C0B9, 0, 4 );
+  write_kernel_memory( 0x21b8000, 0x31910BBF, 0, 4 );
+
+  // EIM_CS0GCR2   
+  //  MUX16_BYP_GRANT = 1
+  //  ADH = 1 (1 cycles)
+  //  0x1001
+  write_kernel_memory( 0x21b8004, 0x1000, 0, 4 );
+
+
+  // EIM_CS0RCR1   
+  // 00 000101 0 000   0   000   0 000 0 000 0 000 0 000
+  //    RWSC     RADVA RAL RADVN   OEA   OEN   RCSA  RCSN
+  // RWSC 000101    5 cycles for reads to happen
+  //
+  // 0000 0111 0000   0011   0000 0000 0000 0000
+  //  0    7     0     3      0  0    0    0
+  // 0000 0101 0000   0000   0 000 0 000 0 000 0 000
+//  write_kernel_memory( 0x21b8008, 0x05000000, 0, 4 );
+//  write_kernel_memory( 0x21b8008, 0x0A024000, 0, 4 );
+  write_kernel_memory( 0x21b8008, 0x09014000, 0, 4 );
+  // EIM_CS0RCR2  
+  // 0000 0000 0   000 00 00 0 010  0 001 
+  //           APR PAT    RL   RBEA   RBEN
+  // APR = 0   mandatory because MUM = 1
+  // PAT = XXX because APR = 0
+  // RL = 00   because async mode
+  // RBEA = 000  these match RCSA/RCSN from previous field
+  // RBEN = 000
+  // 0000 0000 0000 0000 0000  0000
+  write_kernel_memory( 0x21b800c, 0x00000000, 0, 4 );
+
+  // EIM_CS0WCR1
+  // 0   0    000100 000   000   000  000  010 000 000  000
+  // WAL WBED WWSC   WADVA WADVN WBEA WBEN WEA WEN WCSA WCSN
+  // WAL = 0       use WADVN
+  // WBED = 0      allow BE during write
+  // WWSC = 000100 4 write wait states
+  // WADVA = 000   same as RADVA
+  // WADVN = 000   this sets WE length to 1 (this value +1)
+  // WBEA = 000    same as RBEA
+  // WBEN = 000    same as RBEN
+  // WEA = 010     2 cycles between beginning of access and WE assertion
+  // WEN = 000     1 cycles to end of WE assertion
+  // WCSA = 000    cycles to CS assertion
+  // WCSN = 000    cycles to CS negation
+  // 1000 0111 1110 0001 0001  0100 0101 0001
+  // 8     7    E    1    1     4    5    1
+  // 0000 0111 0000 0100 0000  1000 0000 0000
+  // 0      7    0   4    0     8    0     0
+  // 0000 0100 0000 0000 0000  0100 0000 0000
+  //  0    4    0    0     0    4     0    0
+
+  write_kernel_memory( 0x21b8010, 0x09080800, 0, 4 );
+  //  write_kernel_memory( 0x21b8010, 0x02040400, 0, 4 );
+
+  // EIM_WCR
+  // BCM = 1   free-run BCLK
+  // GBCD = 0  don't divide the burst clock
+  write_kernel_memory( 0x21b8090, 0x701, 0, 4 );
+
+  // EIM_WIAR 
+  // ACLK_EN = 1
+  write_kernel_memory( 0x21b8094, 0x10, 0, 4 );
+}
+
+static int prep_eim_old(void) {
 	int i;
 	// set up pads to be mapped to EIM
 	for( i = 0; i < 16; i++ ) {
