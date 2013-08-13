@@ -1,26 +1,19 @@
 .equ    IEN, 0xA8
-.equ    SDCMD, 0x8D
 
-.equ    SDDL, 0x96
-.equ    SDDH, 0x97
+.equ    SDDL, 0xD6
+.equ    SDDH, 0xD7
 
-.equ    SDBL, 0x93
-.equ    SDBH, 0x94
+.equ    SDBC, 0xDE  ; SD byte count
 
-.equ    SDODMAADDRL, 0x99
-.equ    SDODMAADDRH, 0x9A
-
-.equ    SDODMABYTESL, 0x91
-.equ    SDODMABYTESH, 0x92
-
-.equ    SDOS, 0x88
+.equ    SDOS, 0xE7
 .equ    SDDIR, 0xEB
 .equ    SDSM, 0x90
 
-.equ    SDI1, 0x8C
-.equ    SDI2, 0x8B
-.equ    SDI3, 0x8A
-.equ    SDI4, 0x89
+.equ    SDCMD, 0xE6
+.equ    SDI1, 0xE9
+.equ    SDI2, 0xEA
+.equ    SDI3, 0xEB
+.equ    SDI4, 0xEC
 
 .equ    RESET, 0
 .equ    PORT1, 0xF6
@@ -35,76 +28,98 @@
 
 .equ    SD_WAITING, 0x24
 
-.org 0x2900
+.org 0x7b00
 ; This gets called from the ROM.
 ; ---------------------------------------------------------------------------
 ; This gets called from an interrupt context, from within ROM.  We want to
 ; manipulate the stack so that when we return from intterupt, code execution
 ; will continue at an address immediately following this code section.
 reset_vector:
-        anl     0x80, #0xFE
-        orl     0x80, #2
+;        anl     0x80, #0xFE
+;        orl     0x80, #2
+;
+;        pop     PSW             ; Remove previous return addresses
+;        pop     ACC             ; from the stack
+;
+;        mov     A, #0x13        ; Add the new return
+;        push    ACC             ; address to the stack, so that when
+;        mov     A, #0x7b        ; we reti, we end up at our
+;        push    ACC             ; "start" address.
 
-        pop     PSW             ; Remove previous return addresses
-        pop     ACC             ; from the stack
-
-        mov     A, #0x13        ; Add the new return
-        push    ACC             ; address to the stack, so that when
-        mov     A, #0x29        ; we reti, we end up at our
-        push    ACC             ; "start" address.
-
-        reti                    ; Return from interrupt, ending up at 0x2913
+        anl     0xdc, #0xfe
+        mov     A, #0x13
+        push    ACC
+        mov     A, #0x7b
+        push    ACC
+        reti                    ; Return from interrupt, ending up at 0x7b13
 
 ; ---------------------------------------------------------------------------
-.org 0x2913
+.org 0x7b13
 start:
         mov     IEN, #0         ; Disable interrupts
         mov     SP, #0x80       ; Reset stack pointer
-        mov     SDDIR, #0xff    ; Prevent the SD card from writing 0x00
+        acall   more_setup
         acall   setup
         ajmp    cmd_hello  ; Send a "hello" packet
 
-.org 0x2920
+.org 0x7b20
 ; ---------------------------------------------------------------------------
 ; SD interrupt handler.  Called from an interrupt context.
 sdi_isr:
         push    ACC
-        push    0xD2
+        push    0x80
         push    DPH
         push    DPL
         push    PSW
         mov     PSW, #8
-        mov     0xd2, #0
-        anl     0x8e, #0xFE
-        clr     0x24.3
+        mov     0x80, #8
+        clr     0xE8.0
+        clr     0xE8.1
+        orl     0xE3, #1
+        anl     0xCE, #0xEC
 
-        lcall   wait_for_packet
-        mov     0x31, SDCMD     ; Copy the incoming SD packet
-        mov     0x20, SDI1      ; to an area of memory commonly used
-        mov     0x21, SDI2      ; by the SD transmission engine.  Copy the
-        mov     0x22, SDI3      ; incoming packet here as part of an echo-back
-        mov     0x23, SDI4      ; program.
+waiting:
+        jnb     SDSM.4, waiting
+        mov     0xD6, #0x8A
+        mov     0xD7, #0
+        mov     0xDE, #0xF
+        mov     0xE7, #0x71
+        ajmp    exit_sdi_isr
 
-        orl     SDSM, #1        ; Kick the SD state machine (what does this do?)
+;        lcall   wait_for_packet
+;        mov     0x31, SDCMD     ; Copy the incoming SD packet
+;        mov     0x20, SDI1      ; to an area of memory commonly used
+;        mov     0x21, SDI2      ; by the SD transmission engine.  Copy the
+;        mov     0x22, SDI3      ; incoming packet here as part of an echo-back
+;        mov     0x23, SDI4      ; program.
+;
+;        orl     SDSM, #1        ; Kick the SD state machine (what does this do?)
 
 exit_sdi_isr:
         pop     PSW
         pop     DPL
         pop     DPH
-        pop     0xD2
+        pop     0x80
         pop     ACC
-        setb    SD_WAITING.1    ; Indicate we have a command waiting
+;        setb    SD_WAITING.1    ; Indicate we have a command waiting
         reti
 ; ---------------------------------------------------------------------------
 
-; Point the ISR stored in DPTR to address 0x2920
+more_setup:
+        clr     0xA0.2
+        anl     0xE8, #0xf0
+        orl     0xdc, #4
+        orl     0xdc, #8
+        ret
+
+; Point the ISR stored in DPTR to address 0x7b20
 ; DPTR [in]: Address of the ISR to set
 set_isr:
         mov     A, #0x02
         movx    @DPTR, A
 
         inc     DPTR
-        mov     A, #0x29
+        mov     A, #0x7b
         movx    @DPTR, A
 
         inc     DPTR
@@ -140,19 +155,15 @@ setup_sdport:
 
 reset_sdport:
         clr     EA
-        anl     0x8e, #0xfe
-        anl     0x8e, #0xfd
-        anl     0x8e, #0xfb
-        anl     0x8e, #0xf7
-
-        setb    0x98.3
-        mov     IEN, #0x8f
-        clr     0x98.3
-        setb    EA
+        orl     0xd1, #1
+        orl     0xb9, #2
+wait_sd_ready:
+        jnb     0xe8.1, wait_sd_ready
+        clr     0xe8.1
         ret
 
 setup:
-        ; Set up ISR to call function at 0x293f.  We're interested
+        ; Set up ISR to call function at 0x7b3f.  We're interested
         ; in both interrupt 0 and interrupt 1.
         ; These fire whenever we get an SD command.
         mov     DPTR, #0x0200
@@ -301,13 +312,23 @@ cmd_error:
 xmit_response:
         acall   reset_sdport    ; Set up the SD pins
 
-        mov     SDDL, #0x74     ; Point the outgoing address at
-        mov     SDDH, #0x05     ; the contents of RAM_0x20..RAM_0x24
-
-        mov     SDBL, #0x03     ; Output four [sic] bytes
-        mov     SDBH, #0        ;
-
-        mov     SDOS, #0x1      ; Kick off the transfer
+;        mov     SDDL, #0x74     ; Point the outgoing address at
+;        mov     SDDH, #0x05     ; the contents of RAM_0x20..RAM_0x24
+;
+;        mov     SDBC, #0x03     ; Output four [sic] bytes
+;
+;        mov     SDOS, #0x71      ; Kick off the transfer
+        mov     0xd4, #0x91
+        mov     0xd5, #0
+        mov     0xe1, #7
+        mov     0xe2, #0
+        orl     0xe5, #1
+        orl     0xb9, #8
+wait_xfer_done:
+        jnb     0xe8.3, wait_xfer_done
+        clr     0xe8.3
+        anl     0xd1, #0xfe
+        mov     0xcf, #4
 
         sjmp    wait_for_next_command
 

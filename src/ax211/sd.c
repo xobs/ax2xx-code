@@ -153,6 +153,8 @@ static int init_port(struct sd_state *state) {
     gpio_set_value(state->dat1, 0);
     gpio_set_value(state->dat2, 0);
 
+    gpio_set_direction(state->clk, GPIO_OUT);
+
     eim_set(fpga_w_nand_pwr_ctl, 0);
     usleep(140000);
     CS_H();
@@ -284,7 +286,7 @@ void xmit_mmc_dat4 (
 
 // Wait for the start bit.
 // Return the number of clock cycles we've waited.
-int rcvr_mmc_dat1_start(struct sd_state *state, int tries) {
+int rcvr_mmc_dat0_start(struct sd_state *state, int tries) {
     int attempts = 0;
     while (attempts < tries && gpio_get_value(state->dat0)) {
         attempts++;
@@ -1068,10 +1070,25 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
     uint8_t bfr[6];
     int i;
     uint8_t response[6];
-
+    static int run = 0;
 
     init_port(state);
     gpio_set_direction(state->cmd, GPIO_OUT);
+
+    gpio_set_direction(state->dat0, GPIO_OUT);
+    gpio_set_direction(state->dat1, GPIO_OUT);
+    gpio_set_direction(state->dat2, GPIO_OUT);
+    gpio_set_direction(state->dat3, GPIO_OUT);
+
+    run |= 8;
+    run |= 1;
+    printf("Setting data pins to %d%d%d%d\n",
+            !!(run&8), !!(run&4), !!(run&2), !!(run&1));
+    gpio_set_value(state->dat0, !!(run&1));
+    gpio_set_value(state->dat1, !!(run&2));
+    gpio_set_value(state->dat2, !!(run&4));
+    gpio_set_value(state->dat3, !!(run&8));
+    run++;
 
     // Send magical knock sequence
     bfr[0] = 0|0x40;
@@ -1110,8 +1127,12 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
         printf("Knock CRC7 differs.  Got %02x, calculated %02x\n",
                response[5], ((crc7(response, 5)<<1)|1)); 
 
-    if (response[0] != 0x3f)
-        return 1;
+    // Response should be {0x3f 0x00 0x00 0x00 0x53 0x6b}
+    if (response[0] != 0x3f || response[1] != 0x00
+     || response[2] != 0x00 || response[3] != 0x00
+     || response[4] != 0x53)
+        return -1;
+
     return 0;
 }
 
@@ -1119,6 +1140,7 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
 int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     uint8_t sub_bfr[4][size/4];
     uint16_t crcs[4];
+    uint32_t crc32s[4];
     int i;
     int bit;
     memset(sub_bfr, 0, sizeof(sub_bfr));
@@ -1142,8 +1164,11 @@ int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
         }
     }
 
-    for (i=0; i<4; i++)
+    for (i=0; i<4; i++) {
         crcs[i] = crc16(sub_bfr[i], size/4);
+        crc32s[i] = crc32(sub_bfr[i], size/4);
+        printf("Channel %d CRCs   32:0x%08x   16:0x%04x  7:0x%02x\n", i, crc32s[i], crcs[i], crc7(sub_bfr[i], size/4));
+    }
 
     crc_bfr[0] =
             ((!!((crcs[0]>>8)&0x80))<<7)
@@ -1221,3 +1246,20 @@ int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     return 0;
 }
 
+int sd_read_pins(struct sd_state *state) {
+    gpio_set_direction(state->dat0, GPIO_IN);
+    gpio_set_direction(state->dat1, GPIO_IN);
+    gpio_set_direction(state->dat2, GPIO_IN);
+    gpio_set_direction(state->dat3, GPIO_IN);
+    gpio_set_direction(state->cmd, GPIO_IN);
+    gpio_set_direction(state->clk, GPIO_IN);
+
+    return
+        ((!!gpio_get_value(state->dat0)))
+      | ((!!gpio_get_value(state->dat1))<<1)
+      | ((!!gpio_get_value(state->dat2))<<2)
+      | ((!!gpio_get_value(state->dat3))<<3)
+      | ((!!gpio_get_value(state->cmd))<<4)
+      | ((!!gpio_get_value(state->clk))<<5)
+      ;
+}

@@ -15,6 +15,7 @@
 #include "nand.h"
 
 #define DBG_PROMPT "AX211> "
+#define PROGRAM_OFFSET 0x7b00
 
 struct dbg {
     int             should_quit;
@@ -755,11 +756,28 @@ static int find_fixups(struct dbg *dbg) {
     int found_ext_op = 0;
 
     printf("Locating fixup hooks... "); fflush(stdout);
-    ret = xram_get(dbg, program_memory, 0x2900, sizeof(program_memory));
+    memset(program_memory, 0, sizeof(program_memory));
+    ret = xram_get(dbg, program_memory, PROGRAM_OFFSET, sizeof(program_memory));
     if (ret) {
-        printf("Failed\n");
+        printf("Failed to dump program memory\n");
         return ret;
     }
+    printf("Program memory (0x%x - 0x%x):\n", PROGRAM_OFFSET, PROGRAM_OFFSET+512);
+    print_hex(program_memory, sizeof(program_memory));
+
+
+/*
+    uint8_t whole_memory[0x2e00];
+    memset(whole_memory, 0, sizeof(whole_memory));
+    ret = xram_get(dbg, whole_memory, 0, sizeof(whole_memory));
+    if (ret) {
+        printf("Failed to get whole memory\n");
+        return ret;
+    }
+    printf("Whole memory (0x0000 - 0x%x):\n", sizeof(whole_memory));
+    print_hex(whole_memory, sizeof(whole_memory));
+*/
+
 
     for (i=0; i<sizeof(program_memory); i++) {
         // Special charachter for our detection.
@@ -767,23 +785,23 @@ static int find_fixups(struct dbg *dbg) {
             && program_memory[i+1] == 0x60
             && program_memory[i+2] == 0x61) {
             found_sfr_get = 1;
-            xram_set(dbg, 0x2900+i, 0x85);  // mov
-            dbg->read_sfr_offset = 0x2900+i+1;
-            xram_set(dbg, 0x2900+i+2, 0x20);  // Destination register
+            xram_set(dbg, PROGRAM_OFFSET+i, 0x85);  // mov
+            dbg->read_sfr_offset = PROGRAM_OFFSET+i+1;
+            xram_set(dbg, PROGRAM_OFFSET+i+2, 0x20);  // Destination register
         }
         if (program_memory[i] == 0xa5
             && program_memory[i+1] == 0x62
             && program_memory[i+2] == 0x63) {
             found_sfr_set = 1;
-            xram_set(dbg, 0x2900+i, 0x85);  // mov
-            xram_set(dbg, 0x2900+i+1, 0x20);  // Source register
-            dbg->write_sfr_offset = 0x2900+i+2;
+            xram_set(dbg, PROGRAM_OFFSET+i, 0x85);  // mov
+            xram_set(dbg, PROGRAM_OFFSET+i+1, 0x20);  // Source register
+            dbg->write_sfr_offset = PROGRAM_OFFSET+i+2;
         }
         if (program_memory[i] == 0xa5
             && program_memory[i+1] == 0x64
             && program_memory[i+2] == 0x65) {
             found_ext_op = 1;
-            dbg->ext_op_offset = 0x2900+i;
+            dbg->ext_op_offset = PROGRAM_OFFSET+i;
         }
     }
 

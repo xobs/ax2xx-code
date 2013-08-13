@@ -108,13 +108,12 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
 
 static int load_and_enter_debugger(struct sd_state *state, char *filename) {
     uint8_t response[8];
-    uint8_t file[512+(4*sizeof(uint16_t))];
+    uint8_t file[512];
     memset(file, 0xff, sizeof(file));
 
     // Load in the debugger stub
     if (read_file(filename, file, 512))
         return 1;
-    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
 
     while(1) {
         int ret;
@@ -156,6 +155,9 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
 
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     uint8_t response[512];
+    uint8_t sfrs[4];
+    uint8_t sfrs_val0[4];
+    uint8_t sfrs_val1[4];
     uint8_t file[512+(4*sizeof(uint16_t))];
 	int i = 0;
     int ret;
@@ -173,54 +175,124 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         return -1;
     }
 
-    int fd = open("dump-rom.bin", O_RDONLY);
+    int fd = open("fuzzer.bin", O_RDONLY);
+    if (-1 == fd) {
+        perror("Couldn't open binary program");
+        exit(1);
+    }
     read(fd, file, 512);
     close(fd);
 
-    file[0x75] = run;
-    file[0x78] = run>>8;
+    // Patch the program binary
+    sfrs[0] = (rand()&0x7f) | 0x80;
+    sfrs[1] = (rand()&0x7f) | 0x80;
+    sfrs[2] = (rand()&0x7f) | 0x80;
+    sfrs[3] = (rand()&0x7f) | 0x80;
+    sfrs_val0[0] = rand();
+    sfrs_val0[1] = rand();
+    sfrs_val0[2] = rand();
+    sfrs_val0[3] = rand();
+    sfrs_val1[0] = rand();
+    sfrs_val1[1] = rand();
+    sfrs_val1[2] = rand();
+    sfrs_val1[3] = rand();
 
-    static int rom_fd;
-    if (!rom_fd)
-        rom_fd = open("ax211-rom.bin", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int matched = 0;
+    for (i=0; i<512; i++) {
+        if (file[i] != 0xa5)
+            continue;
+        if (file[i+1] == 0x23 && file[i+2] == 0x24) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[0];        // dest register
+            file[i+2] = sfrs_val0[0];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x25 && file[i+2] == 0x26) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[1];        // dest register
+            file[i+2] = sfrs_val0[1];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x27 && file[i+2] == 0x28) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[2];        // dest register
+            file[i+2] = sfrs_val0[2];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x29 && file[i+2] == 0x2a) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[3];        // dest register
+            file[i+2] = sfrs_val0[3];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x33 && file[i+2] == 0x34) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[0];        // dest register
+            file[i+2] = sfrs_val1[0];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x35 && file[i+2] == 0x36) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[1];        // dest register
+            file[i+2] = sfrs_val1[1];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x37 && file[i+2] == 0x38) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[2];        // dest register
+            file[i+2] = sfrs_val1[2];   // immediate value
+            matched++;
+        }
+        if (file[i+1] == 0x39 && file[i+2] == 0x3a) {
+            file[i+0] = 0x75;           // mov
+            file[i+1] = sfrs[3];        // dest register
+            file[i+2] = sfrs_val1[3];   // immediate value
+            matched++;
+        }
+    }
+    if (matched != 8) {
+        printf("Couldn't find 6 matches, only found %d\n", matched);
+        exit(1);
+    }
 
+    fd = open("fuzzer-out.bin", O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    write(fd, file, 512);
+    close(fd);
+
+    // Transmit the file
     sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
-    rcvr_mmc_cmd(state, response, 2);
-    for (i=0; i<3; i++) {
-        if (-1 != rcvr_mmc_cmd_start(state, 50))
-            break;
-        usleep(50000);
+    //rcvr_mmc_dat0_start(state, 32);
+    rcvr_spi(state, response, 64);
+
+
+    // Wait for some sign of life
+    int sd_pins = sd_read_pins(state);
+    int matches = 0;
+    for (i=0; i<10; i++) {
+        usleep(5000);
+        int new_pins = sd_read_pins(state);
+        if (new_pins != sd_pins) {
+            matches++;
+            sd_pins = new_pins;
+        }
     }
-    if (-1 != rcvr_mmc_cmd_start(state, 5))
-        return -1;
-    rcvr_mmc_cmd(state, response, sizeof(response));
 
     printf("Result of factory mode: %d\n", ret);
 
     printf("\nResponse:\n");
-    print_hex(response, sizeof(response));
-    printf("SDL: %02x   SDH: %02x\n", file[0x75], file[0x78]);
+    print_hex(response, 64);
+    printf("SFR_%02x:  %02x / %02x\n", sfrs[0], sfrs_val0[0], sfrs_val1[0]);
+    printf("SFR_%02x:  %02x / %02x\n", sfrs[1], sfrs_val0[1], sfrs_val1[1]);
+    printf("SFR_%02x:  %02x / %02x\n", sfrs[2], sfrs_val0[2], sfrs_val1[2]);
+    printf("SFR_%02x:  %02x / %02x\n", sfrs[3], sfrs_val0[3], sfrs_val1[3]);
+    printf("%d pin matches (last: %x)\n", matches, sd_pins);
     printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
 
-    uint8_t cmp[] = {0xfd, 0x9a, 0xd1, 0x42, 0xf6, 0x20, 0xcc, 0x51,
-                     0xd3, 0xc6, 0xec, 0x47, 0x77, 0x31, 0x71, 0x01};
-    int matches = 0;
-    for (i=0; i<sizeof(cmp); i++) {
-        if (response[i+1] == cmp[i])
-            matches++;
-    }
-    if (matches > 10) {
-        printf("Got a match!\n");
-        exit(0);
-    }
-    for (i=0; i<sizeof(response); i++) {
-        if (response[i] != 0xff)
-            break;
-    }
-    if (i >= sizeof(response)) {
-        printf("Got no response at all!\n");
-        return -1;
+
+    if (matches >= 5) {
+        printf("Potential match\n");
+        return 1;
     }
 
     return 0;
@@ -317,7 +389,7 @@ static int do_execute_file(struct sd_state *state,
                            int seed,
                            char *filename) {
     uint8_t response[560];
-    uint8_t file[512+(4*sizeof(uint16_t))];
+    uint8_t file[512+8];
     int ret;
     int tries;
 
@@ -339,25 +411,23 @@ static int do_execute_file(struct sd_state *state,
             printf("Couldn't enter factory mode, trying again (%d/10)\n",
                     tries+1);
     }
-    if (-1 == ret)
+    if (-1 == ret) {
+        printf("Failed\n");
         return -1;
+    }
 
     sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
-    rcvr_mmc_cmd(state, response, 1);
+    rcvr_spi(state, response, 1);
     printf("Immediate code-load response: %02x\n", response[0]);
 
-    for (tries=0; tries<2; tries++) {
-        if (-1 != rcvr_mmc_cmd_start(state, 50))
-            break;
-        usleep(50000);
-    }
-    rcvr_mmc_cmd(state, response, sizeof(response));
+    rcvr_mmc_dat1(state, response, sizeof(response));
 
     printf("Result of factory mode: %d\n", ret);
 
     printf("\nResponse (%02x):\n", response[0]);
     print_hex(response+1, sizeof(response)-1);
+    sd_read_pins(state);
 
     return 0;
 }
@@ -372,8 +442,8 @@ static int print_help(char *name) {
         "\t%s -d [dbgr]  Enters debugger, launching the specified filename\n"
         "\t%s -x [file]  Enters factory mode and executes the file\n"
         "Options:\n"
-        " -s [seed]    Specifies a seed for random values\n"
-        " -l [loop]    Execute the loop with run=[loop]\n"
+        " -s [seed]      Specifies a seed for random values\n"
+        " -r [run]       Execute the loop with run=[loop]\n"
         ,
         name, name, name, name, name);
     return 0;
@@ -406,7 +476,7 @@ int main(int argc, char **argv) {
             eim_get(fpga_r_ddr3_v_major),
             eim_get(fpga_r_ddr3_v_minor));
 
-	while ((ch = getopt(argc, argv, "vfchs:l:x:d:")) != -1) {
+	while ((ch = getopt(argc, argv, "vfchs:r:x:d:")) != -1) {
 		switch(ch) {
 		case 'c':
 			mode = 1;
@@ -421,7 +491,7 @@ int main(int argc, char **argv) {
             seed = strtoul(optarg, NULL, 0);
             break;
 
-        case 'l':
+        case 'r':
             have_loop = 1;
             loop = strtoul(optarg, NULL, 0);
             break;

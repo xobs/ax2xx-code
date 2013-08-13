@@ -23,8 +23,10 @@
 CFLAGS=-O3 -Wall
 CC=gcc
 
-PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin debugger.bin
+PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin debugger.bin fuzzer.bin blink-led-ax215.bin
 PROGRAMS=$(PROGRAM_SOURCES:.c=.o)
+
+DBG_OFFSET=31488
 
 all: as31 ax211 $(PROGRAMS)
 
@@ -37,7 +39,7 @@ ax211: src/ax211
 %.bin: %.asm as31
 	./as31 -Fbin $<
 	@mv $@ tmp.bin
-	@dd if=tmp.bin of=$@ bs=10496 skip=1 2> /dev/null
+	@dd if=tmp.bin of=$@ bs=$(DBG_OFFSET) skip=1 2> /dev/null
 	@rm -f tmp.bin
 
 clean:
