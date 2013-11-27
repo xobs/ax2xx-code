@@ -154,10 +154,11 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
 
 
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
-    uint8_t response[512];
-    uint8_t sfrs[4];
-    uint8_t sfrs_val0[4];
-    uint8_t sfrs_val1[4];
+    uint8_t response[16];
+    static int spots = 5;
+    uint8_t sfrs[spots];
+    uint8_t sfrs_val0[spots];
+    uint8_t sfrs_val1[spots];
     uint8_t file[512+(4*sizeof(uint16_t))];
 	int i = 0;
     int ret;
@@ -168,13 +169,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     srand(seed);
     printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
 
-    // Actually enter factory mode (sends CMD63/APPO and waits for response)
-    ret = sd_enter_factory_mode(state, run);
-    if (-1 == ret) {
-        printf("Couldn't enter factory mode\n");
-        return -1;
-    }
-
+    memset(file, 0, sizeof(file));
     int fd = open("fuzzer.bin", O_RDONLY);
     if (-1 == fd) {
         perror("Couldn't open binary program");
@@ -184,74 +179,61 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     close(fd);
 
     // Patch the program binary
-    sfrs[0] = (rand()&0x7f) | 0x80;
-    sfrs[1] = (rand()&0x7f) | 0x80;
-    sfrs[2] = (rand()&0x7f) | 0x80;
-    sfrs[3] = (rand()&0x7f) | 0x80;
-    sfrs_val0[0] = rand();
-    sfrs_val0[1] = rand();
-    sfrs_val0[2] = rand();
-    sfrs_val0[3] = rand();
-    sfrs_val1[0] = rand();
-    sfrs_val1[1] = rand();
-    sfrs_val1[2] = rand();
-    sfrs_val1[3] = rand();
+    for (i=0; i<spots; i++) {
+        sfrs[i] = (rand()&0x7f) | 0x80;
+//        if (sfrs[i] == 0xef || sfrs[i] == 0xf2)
+//            continue;
+
+        sfrs_val0[i] = rand();
+        sfrs_val1[i] = rand();
+    }
+
+    // Actually enter factory mode (sends CMD63/APPO and waits for response)
+    ret = sd_enter_factory_mode(state, run);
+    if (-1 == ret) {
+        printf("Couldn't enter factory mode\n");
+        return -1;
+    }
 
     int matched = 0;
+    int total = 1+(rand()%spots);
     for (i=0; i<512; i++) {
         if (file[i] != 0xa5)
             continue;
-        if (file[i+1] == 0x23 && file[i+2] == 0x24) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[0];        // dest register
-            file[i+2] = sfrs_val0[0];   // immediate value
+
+        if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
+            int reg = file[i+1]&0x7f;
+            int oneorzero = (file[i+1]&0x80);
+            if (reg < total) {
+
+                file[i+0] = 0x75;           // mov SFR, #immediate
+                file[i+1] = sfrs[reg];        // Dest register
+
+                if (oneorzero)
+                    file[i+2] = sfrs_val1[reg];   // Immediate value
+                else
+                    file[i+2] = sfrs_val0[reg];   // Immediate value
+            }
+            else {
+                file[i+0] = 0;
+                file[i+1] = 0;
+                file[i+2] = 0;
+                sfrs[reg] = 0;
+                sfrs_val0[reg] = 0;
+                sfrs_val1[reg] = 0;
+            }
             matched++;
+            i+=2;
         }
-        if (file[i+1] == 0x25 && file[i+2] == 0x26) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[1];        // dest register
-            file[i+2] = sfrs_val0[1];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x27 && file[i+2] == 0x28) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[2];        // dest register
-            file[i+2] = sfrs_val0[2];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x29 && file[i+2] == 0x2a) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[3];        // dest register
-            file[i+2] = sfrs_val0[3];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x33 && file[i+2] == 0x34) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[0];        // dest register
-            file[i+2] = sfrs_val1[0];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x35 && file[i+2] == 0x36) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[1];        // dest register
-            file[i+2] = sfrs_val1[1];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x37 && file[i+2] == 0x38) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[2];        // dest register
-            file[i+2] = sfrs_val1[2];   // immediate value
-            matched++;
-        }
-        if (file[i+1] == 0x39 && file[i+2] == 0x3a) {
-            file[i+0] = 0x75;           // mov
-            file[i+1] = sfrs[3];        // dest register
-            file[i+2] = sfrs_val1[3];   // immediate value
-            matched++;
+        else {
+            printf("Error locating special opcode (%d %02x %02x / %02x)\n",
+                    i, file[i+1], file[i+2], file[i+1]&0x7f);
+            exit(0);
         }
     }
-    if (matched != 8) {
-        printf("Couldn't find 6 matches, only found %d\n", matched);
+
+    if (matched != spots*2) {
+        printf("Couldn't find %d matches, only found %d\n", spots*2, matched);
         exit(1);
     }
 
@@ -262,15 +244,15 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     // Transmit the file
     sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
-    //rcvr_mmc_dat0_start(state, 32);
-    rcvr_spi(state, response, 64);
+    rcvr_spi(state, response, sizeof(response));
 
 
     // Wait for some sign of life
     int sd_pins = sd_read_pins(state);
     int matches = 0;
+    int sleeptime = 100*(rand()&0xf);
     for (i=0; i<10; i++) {
-        usleep(5000);
+        usleep(sleeptime);
         int new_pins = sd_read_pins(state);
         if (new_pins != sd_pins) {
             matches++;
@@ -278,16 +260,13 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         }
     }
 
-    printf("Result of factory mode: %d\n", ret);
-
     printf("\nResponse:\n");
-    print_hex(response, 64);
-    printf("SFR_%02x:  %02x / %02x\n", sfrs[0], sfrs_val0[0], sfrs_val1[0]);
-    printf("SFR_%02x:  %02x / %02x\n", sfrs[1], sfrs_val0[1], sfrs_val1[1]);
-    printf("SFR_%02x:  %02x / %02x\n", sfrs[2], sfrs_val0[2], sfrs_val1[2]);
-    printf("SFR_%02x:  %02x / %02x\n", sfrs[3], sfrs_val0[3], sfrs_val1[3]);
+    print_hex(response, sizeof(response));
+    for (i=0; i<spots; i++)
+        printf("SFR_%02x:  %02x / %02x\n", sfrs[i], sfrs_val0[i], sfrs_val1[i]);
     printf("%d pin matches (last: %x)\n", matches, sd_pins);
     printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
+    printf("--------------------------------------------------\n");
 
 
     if (matches >= 5) {

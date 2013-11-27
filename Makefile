@@ -28,13 +28,13 @@ PROGRAMS=$(PROGRAM_SOURCES:.c=.o)
 
 DBG_OFFSET=31488
 
-all: as31 ax211 $(PROGRAMS)
+all: as31 ax215 $(PROGRAMS)
 
 as31: src/as31
 	+make -C src/as31
 
-ax211: src/ax211
-	+make -C src/ax211
+ax215: src/ax215
+	+make -C src/ax215
 
 %.bin: %.asm as31
 	./as31 -Fbin $<
@@ -43,6 +43,6 @@ ax211: src/ax211
 	@rm -f tmp.bin
 
 clean:
-	make -C src/ax211 clean
+	make -C src/ax215 clean
 	make -C src/as31 clean
 	rm -f TestBoot.bin dump-rom.bin blink-led.bin

@@ -1140,7 +1140,6 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
 int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
     uint8_t sub_bfr[4][size/4];
     uint16_t crcs[4];
-    uint32_t crc32s[4];
     int i;
     int bit;
     memset(sub_bfr, 0, sizeof(sub_bfr));
@@ -1166,8 +1165,6 @@ int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
 
     for (i=0; i<4; i++) {
         crcs[i] = crc16(sub_bfr[i], size/4);
-        crc32s[i] = crc32(sub_bfr[i], size/4);
-        printf("Channel %d CRCs   32:0x%08x   16:0x%04x  7:0x%02x\n", i, crc32s[i], crcs[i], crc7(sub_bfr[i], size/4));
     }
 
     crc_bfr[0] =
