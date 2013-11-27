@@ -34,6 +34,7 @@
 #define R1_PARAMETER        (1<<6)  // The command's argument (e.g. address, block length) was out of the allowed range for this card.
 
 int dbg_main(struct sd_state *state);
+int do_fuzz(struct sd_state *state, int *seed, int *loop);
 
 static int print_header(uint8_t *bfr) {
 	printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
@@ -152,171 +153,6 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
     return 0;
 }
 
-
-static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
-    uint8_t response[16];
-    static int spots = 5;
-    uint8_t sfrs[spots];
-    uint8_t sfrs_val0[spots];
-    uint8_t sfrs_val1[spots];
-    uint8_t file[512+(4*sizeof(uint16_t))];
-	int i = 0;
-    int ret;
-
-    memset(response, 0, sizeof(response));
-    memset(file, 0, sizeof(file));
-
-    srand(seed);
-    printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
-
-    memset(file, 0, sizeof(file));
-    int fd = open("fuzzer.bin", O_RDONLY);
-    if (-1 == fd) {
-        perror("Couldn't open binary program");
-        exit(1);
-    }
-    read(fd, file, 512);
-    close(fd);
-
-    // Patch the program binary
-    for (i=0; i<spots; i++) {
-        sfrs[i] = (rand()&0x7f) | 0x80;
-//        if (sfrs[i] == 0xef || sfrs[i] == 0xf2)
-//            continue;
-
-        sfrs_val0[i] = rand();
-        sfrs_val1[i] = rand();
-    }
-
-    // Actually enter factory mode (sends CMD63/APPO and waits for response)
-    ret = sd_enter_factory_mode(state, run);
-    if (-1 == ret) {
-        printf("Couldn't enter factory mode\n");
-        return -1;
-    }
-
-    int matched = 0;
-    int total = 1+(rand()%spots);
-    for (i=0; i<512; i++) {
-        if (file[i] != 0xa5)
-            continue;
-
-        if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
-            int reg = file[i+1]&0x7f;
-            int oneorzero = (file[i+1]&0x80);
-            if (reg < total) {
-
-                file[i+0] = 0x75;           // mov SFR, #immediate
-                file[i+1] = sfrs[reg];        // Dest register
-
-                if (oneorzero)
-                    file[i+2] = sfrs_val1[reg];   // Immediate value
-                else
-                    file[i+2] = sfrs_val0[reg];   // Immediate value
-            }
-            else {
-                file[i+0] = 0;
-                file[i+1] = 0;
-                file[i+2] = 0;
-                sfrs[reg] = 0;
-                sfrs_val0[reg] = 0;
-                sfrs_val1[reg] = 0;
-            }
-            matched++;
-            i+=2;
-        }
-        else {
-            printf("Error locating special opcode (%d %02x %02x / %02x)\n",
-                    i, file[i+1], file[i+2], file[i+1]&0x7f);
-            exit(0);
-        }
-    }
-
-    if (matched != spots*2) {
-        printf("Couldn't find %d matches, only found %d\n", spots*2, matched);
-        exit(1);
-    }
-
-    fd = open("fuzzer-out.bin", O_WRONLY | O_CREAT | O_TRUNC, 0777);
-    write(fd, file, 512);
-    close(fd);
-
-    // Transmit the file
-    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
-    xmit_mmc_dat4(state, file, sizeof(file));
-    rcvr_spi(state, response, sizeof(response));
-
-
-    // Wait for some sign of life
-    int sd_pins = sd_read_pins(state);
-    int matches = 0;
-    int sleeptime = 100*(rand()&0xf);
-    for (i=0; i<10; i++) {
-        usleep(sleeptime);
-        int new_pins = sd_read_pins(state);
-        if (new_pins != sd_pins) {
-            matches++;
-            sd_pins = new_pins;
-        }
-    }
-
-    printf("\nResponse:\n");
-    print_hex(response, sizeof(response));
-    for (i=0; i<spots; i++)
-        printf("SFR_%02x:  %02x / %02x\n", sfrs[i], sfrs_val0[i], sfrs_val1[i]);
-    printf("%d pin matches (last: %x)\n", matches, sd_pins);
-    printf("Finished up run: %-4d  Seed: %8d\n", run, seed);
-    printf("--------------------------------------------------\n");
-
-
-    if (matches >= 5) {
-        printf("Potential match\n");
-        return 1;
-    }
-
-    return 0;
-}
-
-static int do_interestingness(struct sd_state *state, int *seed, int *loop) {
-	int run;
-    int val;
-    int s;
-
-    if (seed)
-        val = interesting_one_cycle(state, loop?*loop:0, *seed);
-    else if (loop)
-        val = interesting_one_cycle(state, *loop, rand());
-    else {
-        val = 0;
-        run = 0;
-        for (; !val; run++) {
-            s = rand();
-            val = interesting_one_cycle(state, run, s);
-
-            // If we get an interesting value, try running it again.
-            if (val>0) {
-                printf("Potentially interesting.  "
-                       "Trying seed %d again...\n", s);
-                val = interesting_one_cycle(state, run, s);
-
-                // If we get an interesting value, try running it again.
-                if (val>0) {
-                    printf("Still potentially interesting.  "
-                           "Trying seed %d one last time...\n", s);
-                    val = interesting_one_cycle(state, run, s);
-                }
-            }
-
-            // Re-run when val<0, as it means the card didn't go ready
-            if (val<0) {
-                run--;
-                val = 0;
-            }
-        }
-    }
-
-    return val;
-}
 
 
 static int do_validate_file(struct sd_state *state) {
@@ -500,9 +336,7 @@ int main(int argc, char **argv) {
     if (mode == -1)
         ret = print_help(argv[0]);
     else if (mode == 0)
-        ret = do_interestingness(state,
-                                 have_seed?&seed:NULL,
-                                 have_loop?&loop:NULL);
+        ret = do_fuzz(state, have_seed?&seed:NULL, have_loop?&loop:NULL);
     else if (mode == 1)
 		ret = do_get_csd_cid(state);
     else if (mode == 3)

@@ -1,5 +1,5 @@
 SOURCES=gpio.c sd.c main.c crc-16.c eim.c debugger.c \
-		disasm.c disasm-mnem.c nand.c
+		disasm.c disasm-mnem.c nand.c fuzz.c
 OBJECTS=$(SOURCES:.c=.o)
 EXEC=../../ax215
 MY_CFLAGS += -Wall -O0 -g
