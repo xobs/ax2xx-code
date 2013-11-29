@@ -1,18 +1,19 @@
 #!/bin/sh
 if [ -z $1 ]
 then
-	bitfile=/root/fpga/novena_fpga-1.22.bit
-else
-	bitfile=$1
+	echo "Usage: $0 [fpga-file]"
+	exit 1
 fi
 
+bitfile=$1
+
 echo "Setting export of reset pin"
-echo 135 > /sys/class/gpio/export
+echo 135 > /sys/class/gpio/export 2> /dev/null
 echo "setting reset pin to out"
-echo out > /sys/class/gpio/gpio135/direction
+echo out > /sys/class/gpio/gpio135/direction 2> /dev/null
 echo "flipping reset"                       
-echo 0 > /sys/class/gpio/gpio135/value
-echo 1 > /sys/class/gpio/gpio135/value
+echo 0 > /sys/class/gpio/gpio135/value 2> /dev/null
+echo 1 > /sys/class/gpio/gpio135/value 2> /dev/null
                                       
 echo "configuring FPGA"               
                                       
