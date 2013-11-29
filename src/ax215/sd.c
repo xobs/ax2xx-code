@@ -1080,14 +1080,11 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
     gpio_set_direction(state->dat2, GPIO_OUT);
     gpio_set_direction(state->dat3, GPIO_OUT);
 
-    run |= 8;
-    run |= 1;
-    printf("Setting data pins to %d%d%d%d\n",
-            !!(run&8), !!(run&4), !!(run&2), !!(run&1));
-    gpio_set_value(state->dat0, !!(run&1));
-    gpio_set_value(state->dat1, !!(run&2));
-    gpio_set_value(state->dat2, !!(run&4));
-    gpio_set_value(state->dat3, !!(run&8));
+    /* dat1 and dat2 don't matter, but dat0 and dat3 must be high */
+    gpio_set_value(state->dat0, 1);
+    gpio_set_value(state->dat1, 0);
+    gpio_set_value(state->dat2, 0);
+    gpio_set_value(state->dat3, 1);
     run++;
 
     // Send magical knock sequence
@@ -1118,11 +1115,6 @@ int sd_enter_factory_mode(struct sd_state *state, uint8_t type) {
         return -1;
 
     rcvr_mmc_cmd(state, response, sizeof(response));
-    printf("Debug mode APPO response [%d]: "
-           "{0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}\n",
-            i,
-            response[0], response[1], response[2],
-            response[3], response[4], response[5]);
     if (((crc7(response, 5)<<1)|1) != response[5])
         printf("Knock CRC7 differs.  Got %02x, calculated %02x\n",
                response[5], ((crc7(response, 5)<<1)|1)); 
