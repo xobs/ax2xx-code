@@ -1250,5 +1250,6 @@ int sd_read_pins(struct sd_state *state) {
       | ((!!gpio_get_value(state->dat3))<<3)
       | ((!!gpio_get_value(state->cmd))<<4)
       | ((!!gpio_get_value(state->clk))<<5)
+      | 0x40
       ;
 }
