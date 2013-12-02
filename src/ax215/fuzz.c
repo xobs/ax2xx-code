@@ -19,32 +19,51 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
 
     // Patch the program binary
     for (i = 0; i < spots; i++) {
-        sfrs[i] = (rand()&0x7f) | 0x80;
+        sfrs[i] = (rand() & 0x7f) | 0x80;
         sfrs_val0[i] = rand();
-        sfrs_val1[i] = rand();
+
+        // Do something interesting with the value.  Invert it, don't change
+        // it, or generate a new value.
+        switch (rand() & 3) {
+        case 0:
+            sfrs_val1[i] = ~sfrs_val0[i];
+            break;
+
+        case 1:
+            sfrs_val1[i] = sfrs_val0[i];
+            break;
+
+        default:
+            sfrs_val1[i] = rand();
+            break;
+        }
     }
 
     int matched = 0;
-    int total = 1+(rand()%spots);
+    int total = 1 + (rand() % spots);
     for (i=0; i<512; i++) {
         if (file[i] != 0xa5)
             continue;
 
         if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
             int reg = file[i+1]&0x7f;
-            int oneorzero = (file[i+1]&0x80);
+
+            // The first instance will have this bit set to 0.  The second
+            // instance will have it set to 1.  Thus, you can do interesting
+            // things here.
+            int is_anti = (file[i+1]&0x80);
             if (reg < total) {
 
                 file[i+0] = 0x75;           // mov SFR, #immediate
                 file[i+1] = sfrs[reg];        // Dest register
 
-                if (oneorzero)
+                if (is_anti)
                     file[i+2] = sfrs_val1[reg];   // Immediate value
                 else
                     file[i+2] = sfrs_val0[reg];   // Immediate value
             }
             else {
-		/* Fill with NOPs */
+                /* Fill with NOPs */
                 file[i+0] = 0;
                 file[i+1] = 0;
                 file[i+2] = 0;
@@ -62,19 +81,19 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
         }
     }
 
-    if (matched != spots*2) {
+    if (matched != spots * 2) {
         printf("Couldn't find %d matches, only found %d\n", spots*2, matched);
         return -2;
     }
 
-    for (i=0; i<total; i++)
+    for (i = 0; i < total; i++)
         printf("    SFR_%02x:  %02x / %02x\n", sfrs[i], sfrs_val0[i], sfrs_val1[i]);
 
     return 0;
 }
 
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
-    uint8_t response[16];
+    uint8_t response[1];
     uint8_t slow_response[64];
     uint8_t file[512+(4*sizeof(uint16_t))];
     int i = 0;
@@ -97,7 +116,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
 
     ret = patch_fuzzer(state, file, sizeof(file));
     if (ret < 0)
-	    return ret;
+        return ret;
 
     // Actually enter factory mode (sends CMD63/APPO and waits for response)
     ret = sd_enter_factory_mode(state, run);
@@ -142,7 +161,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
 }
 
 int do_fuzz(struct sd_state *state, int *seed, int *loop) {
-	int run;
+    int run;
     int val;
     int s;
 
