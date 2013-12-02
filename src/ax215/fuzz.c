@@ -15,6 +15,7 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
     uint8_t sfrs[spots];
     uint8_t sfrs_val0[spots];
     uint8_t sfrs_val1[spots];
+    uint8_t sleeps[3];
     int i;
 
     // Patch the program binary
@@ -39,45 +40,63 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
         }
     }
 
+    for (i = 0; i < sizeof(sleeps); i++)
+        sleeps[i] = rand() & 0x1f;
+
     int matched = 0;
     int total = 1 + (rand() % spots);
     for (i=0; i<512; i++) {
-        if (file[i] != 0xa5)
-            continue;
 
-        if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
-            int reg = file[i+1]&0x7f;
+        // Handle 'mov R4', which is the outer sleep timer
+        if (file[i] == 0x7a) {
+            file[i+1] = sleeps[0];
+            i++;
+        }
+        else if (file[i] == 0x7b) {
+            file[i+1] = sleeps[1];
+            i++;
+        }
+        else if (file[i] == 0x7c) {
+            file[i+1] = sleeps[2];
+            i++;
+        }
 
-            // The first instance will have this bit set to 0.  The second
-            // instance will have it set to 1.  Thus, you can do interesting
-            // things here.
-            int is_anti = (file[i+1]&0x80);
-            if (reg < total) {
+        else if (file[i] == 0xa5) {
 
-                file[i+0] = 0x75;           // mov SFR, #immediate
-                file[i+1] = sfrs[reg];        // Dest register
+            if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
+                int reg = file[i+1]&0x7f;
 
-                if (is_anti)
-                    file[i+2] = sfrs_val1[reg];   // Immediate value
-                else
-                    file[i+2] = sfrs_val0[reg];   // Immediate value
+                // The first instance will have this bit set to 0.  The second
+                // instance will have it set to 1.  Thus, you can do interesting
+                // things here.
+                int is_anti = (file[i+1]&0x80);
+                if (reg < total) {
+
+                    file[i+0] = 0x75;           // mov SFR, #immediate
+                    file[i+1] = sfrs[reg];        // Dest register
+
+                    if (is_anti)
+                        file[i+2] = sfrs_val1[reg];   // Immediate value
+                    else
+                        file[i+2] = sfrs_val0[reg];   // Immediate value
+                }
+                else {
+                    /* Fill with NOPs */
+                    file[i+0] = 0;
+                    file[i+1] = 0;
+                    file[i+2] = 0;
+                    sfrs[reg] = 0;
+                    sfrs_val0[reg] = 0;
+                    sfrs_val1[reg] = 0;
+                }
+                matched++;
+                i += 2;
             }
             else {
-                /* Fill with NOPs */
-                file[i+0] = 0;
-                file[i+1] = 0;
-                file[i+2] = 0;
-                sfrs[reg] = 0;
-                sfrs_val0[reg] = 0;
-                sfrs_val1[reg] = 0;
+                printf("Error locating special opcode (%d %02x %02x / %02x)\n",
+                        i, file[i+1], file[i+2], file[i+1]&0x7f);
+                return -1;
             }
-            matched++;
-            i+=2;
-        }
-        else {
-            printf("Error locating special opcode (%d %02x %02x / %02x)\n",
-                    i, file[i+1], file[i+2], file[i+1]&0x7f);
-            return -1;
         }
     }
 
@@ -88,6 +107,8 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
 
     for (i = 0; i < total; i++)
         printf("    SFR_%02x:  %02x / %02x\n", sfrs[i], sfrs_val0[i], sfrs_val1[i]);
+    for (i = 0; i < sizeof(sleeps); i++)
+        printf("    MOV R%d, #0x%02x\n", i + 2, sleeps[i]);
 
     return 0;
 }
@@ -134,7 +155,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     // Wait for some sign of life
     int sd_pins = sd_read_pins(state);
     int changes = 0;
-    int sleeptime = 10 *(1 + (rand() & 0xff));
+    int sleeptime = 100 *(1 + (rand() & 0xf));
     for (i = 0; i < sizeof(slow_response); i++) {
         usleep(sleeptime);
         slow_response[i] = sd_read_pins(state);
@@ -144,7 +165,9 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         sd_pins = slow_response[i];
     }
 
-    printf("\nResponse:\n");
+    printf("\n");
+    printf("Waiting %d usec between samples\n", sleeptime);
+    printf("Response:\n");
     print_hex(response, sizeof(response));
     printf("%d state changes, slow response:\n", changes);
     print_hex(slow_response, sizeof(slow_response));
