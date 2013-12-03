@@ -12,11 +12,15 @@ start:
         .db     0xa5, 0x07, 0x07
         mov     R2, #0
         mov     R3, #3
-        mov     R4, #0
+;        mov     R4, #0
+	nop
+	nop
 top_of_pause1:
         djnz    R2, top_of_pause1
         djnz    R3, top_of_pause1
-        djnz    R4, top_of_pause1
+;        djnz    R4, top_of_pause1
+	nop
+	nop
 
 anti_start:
         .db     0xa5, 0x80, 0x80
@@ -29,9 +33,13 @@ anti_start:
         .db     0xa5, 0x87, 0x87
         mov     R2, #0
         mov     R3, #3
-        mov     R4, #0
+;        mov     R4, #0
+	nop
+	nop
 top_of_pause2:
         djnz    R2, top_of_pause2
         djnz    R3, top_of_pause2
-        djnz    R4, top_of_pause2
+;        djnz    R4, top_of_pause2
+	nop
+	nop
         sjmp    start

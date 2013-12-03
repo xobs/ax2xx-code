@@ -9,85 +9,110 @@
 #include <fcntl.h>
 #include "sd.h"
 
+#define MAX_POOLS 16
+#define MAX_SLOTS 32
+#define SFR_SPOTS 8
 
-static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
-    static int spots = 8;
-    uint8_t sfrs[spots];
-    uint8_t sfrs_val0[spots];
-    uint8_t sfrs_val1[spots];
-    uint8_t sleeps[3];
+enum pool_types {
+    pool_sfr,
+    pool_sleep,
+    pool_misc,
+    pool_val0,
+    pool_val1,
+    pool_valtype,
+};
+
+enum pool_misc_types {
+    pool_misc_totals,
+    pool_misc_sleeptime,
+};
+
+union rand_seed {
+    struct {
+        uint32_t seed;
+        uint16_t run;
+    } fields;
+    uint16_t seed[3];
+};
+
+static int fill_rand_pools(int run, int seed,
+        uint8_t pools[MAX_POOLS][MAX_SLOTS])
+{
+    int i, j;
+    union rand_seed rand_seed;
+    rand_seed.fields.seed = seed;
+    rand_seed.fields.run = run;
+
+    printf("\nRun %-4d  Seed: %8d\n", run, seed);
+    for (i = 0; i < MAX_POOLS; i++)
+        for (j = 0; j < MAX_SLOTS; j++)
+            pools[i][j] = nrand48(rand_seed.seed);
+    return 0;
+}
+
+static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize,
+        uint8_t pools[MAX_POOLS][MAX_SLOTS])
+{
+    int matched = 0;
+    int total;
     int i;
 
-    // Patch the program binary
-    for (i = 0; i < spots; i++) {
-        sfrs[i] = (rand() & 0x7f) | 0x80;
-        sfrs_val0[i] = rand();
+    total = 1 + (pools[pool_misc][pool_misc_totals] % SFR_SPOTS);
 
-        // Do something interesting with the value.  Invert it, don't change
-        // it, or generate a new value.
-        switch (rand() & 3) {
-        case 0:
-            sfrs_val1[i] = ~sfrs_val0[i];
-            break;
+    // Patch the binary, and at the same time disassemble the code.
+    // We look for 0xa5 opcodes, and patch these with our own custom commands.
+    printf("start:\n");
+    for (i = 0; i < filesize; i++) {
 
-        case 1:
-            sfrs_val1[i] = sfrs_val0[i];
-            break;
-
-        default:
-            sfrs_val1[i] = rand();
-            break;
-        }
-    }
-
-    for (i = 0; i < sizeof(sleeps); i++)
-        sleeps[i] = rand() & 0x1f;
-
-    int matched = 0;
-    int total = 1 + (rand() % spots);
-    for (i=0; i<512; i++) {
-
-        // Handle 'mov R4', which is the outer sleep timer
-        if (file[i] == 0x7a) {
-            file[i+1] = sleeps[0];
+        if (file[i] >= 0x78 && file[i] <= 0x7f) {
+            uint8_t reg = file[i] & 7;
+            printf("    mov R%d, #0x%02x\n", reg, pools[pool_sleep][reg]);
+            file[i + 1] = pools[pool_sleep][reg];
             i++;
         }
-        else if (file[i] == 0x7b) {
-            file[i+1] = sleeps[1];
-            i++;
-        }
-        else if (file[i] == 0x7c) {
-            file[i+1] = sleeps[2];
+
+        else if (file[i] >= 0xd8 && file[i] <= 0xdf) {
+            printf("    djnz R%d, %d\n", file[i] & 7, (int8_t)file[i + 1]);
             i++;
         }
 
         else if (file[i] == 0xa5) {
 
-            if ((file[i+1] == file[i+2]) && ((file[i+1] & 0x7f) < spots)) {
-                int reg = file[i+1]&0x7f;
+            if ((file[i + 1] == file[i + 2])
+            && ((file[i + 1] & 0x7f) < SFR_SPOTS)) {
+                int reg = file[i + 1] & 0x7f;
 
                 // The first instance will have this bit set to 0.  The second
                 // instance will have it set to 1.  Thus, you can do interesting
                 // things here.
-                int is_anti = (file[i+1]&0x80);
+                int is_anti = (file[i + 1] & 0x80);
                 if (reg < total) {
+                    uint8_t val;
 
-                    file[i+0] = 0x75;           // mov SFR, #immediate
-                    file[i+1] = sfrs[reg];        // Dest register
-
-                    if (is_anti)
-                        file[i+2] = sfrs_val1[reg];   // Immediate value
+                    if (is_anti) {
+                        if ((pools[pool_valtype][reg] & 3) == 0)
+                            val = pools[pool_val0][reg];
+                        else if ((pools[pool_valtype][reg] & 3) == 1)
+                            val = ~pools[pool_val0][reg];
+                        else
+                            val = pools[pool_val1][reg];
+                    }
                     else
-                        file[i+2] = sfrs_val0[reg];   // Immediate value
+                        val = pools[pool_val0][reg];
+
+                    file[i + 0] = 0x75;                 // mov SFR, #immediate
+                    file[i + 1] = pools[pool_sfr][reg]; // Dest register
+                    file[i + 2] = val;                  // Immediate value
+
+                    printf("    mov SFR_%02X, #0x%02x\n",
+                            pools[pool_sfr][reg], val);
                 }
                 else {
+                    printf("    nop\n");
                     /* Fill with NOPs */
-                    file[i+0] = 0;
-                    file[i+1] = 0;
-                    file[i+2] = 0;
-                    sfrs[reg] = 0;
-                    sfrs_val0[reg] = 0;
-                    sfrs_val1[reg] = 0;
+                    file[i + 0] = 0;
+                    file[i + 1] = 0;
+                    file[i + 2] = 0;
                 }
                 matched++;
                 i += 2;
@@ -98,33 +123,42 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize) {
                 return -1;
             }
         }
+
+        else if (file[i] == 0x80) {
+            printf("    sjmp %d\n", (int8_t)file[i + 1]);
+            i++;
+        }
+
+        else if (file[i] == 0x00)
+            printf("    nop\n");
+
+        else
+            printf("Unrecognized opcode: 0x%02x\n", file[i]);
     }
 
-    if (matched != spots * 2) {
-        printf("Couldn't find %d matches, only found %d\n", spots*2, matched);
+    if (matched != SFR_SPOTS * 2) {
+        printf("Couldn't find %d matches, only found %d\n",
+                SFR_SPOTS * 2, matched);
         return -2;
     }
-
-    for (i = 0; i < total; i++)
-        printf("    SFR_%02x:  %02x / %02x\n", sfrs[i], sfrs_val0[i], sfrs_val1[i]);
-    for (i = 0; i < sizeof(sleeps); i++)
-        printf("    MOV R%d, #0x%02x\n", i + 2, sleeps[i]);
 
     return 0;
 }
 
+
 static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
+    uint8_t pools[MAX_POOLS][MAX_SLOTS];
     uint8_t response[1];
     uint8_t slow_response[64];
     uint8_t file[512+(4*sizeof(uint16_t))];
+    int filesize;
     int i = 0;
     int ret;
 
     memset(response, 0, sizeof(response));
     memset(file, 0, sizeof(file));
 
-    srand(seed);
-    printf("\nRun %-4d  Seed: %8d\n", run, seed);
+    fill_rand_pools(run, seed, pools);
 
     memset(file, 0, sizeof(file));
     int fd = open("fuzzer.bin", O_RDONLY);
@@ -132,10 +166,15 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
         perror("Couldn't open binary program");
         exit(1);
     }
-    read(fd, file, 512);
+    filesize = read(fd, file, 512);
     close(fd);
 
-    ret = patch_fuzzer(state, file, sizeof(file));
+    if (filesize < 0) {
+        perror("Couldn't read file");
+        return -1;
+    }
+
+    ret = patch_fuzzer(state, file, filesize, pools);
     if (ret < 0)
         return ret;
 
@@ -155,7 +194,7 @@ static int interesting_one_cycle(struct sd_state *state, int run, int seed) {
     // Wait for some sign of life
     int sd_pins = sd_read_pins(state);
     int changes = 0;
-    int sleeptime = 100 *(1 + (rand() & 0xf));
+    int sleeptime = 10 *(1 + (pools[pool_misc][pool_misc_sleeptime] & 0x3f));
     for (i = 0; i < sizeof(slow_response); i++) {
         usleep(sleeptime);
         slow_response[i] = sd_read_pins(state);
@@ -200,7 +239,7 @@ int do_fuzz(struct sd_state *state, int *seed, int *loop) {
             val = interesting_one_cycle(state, run, s);
 
             // If we get an interesting value, try running it again.
-            if (val>0) {
+            if (val > 0) {
                 printf("Potentially interesting.  "
                        "Trying seed %d again...\n", s);
                 val = interesting_one_cycle(state, run, s);
