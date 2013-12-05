@@ -33,55 +33,64 @@
 #define R1_ADDRESS_ERROR    (1<<5)  // A misaligned address, which did not match the block length was used in the command.
 #define R1_PARAMETER        (1<<6)  // The command's argument (e.g. address, block length) was out of the allowed range for this card.
 
+enum program_mode {
+    mode_help,
+    mode_fuzz,
+    mode_get_csd_cid,
+    mode_validate_file,
+    mode_execute_file,
+    mode_debugger,
+};
+
 int dbg_main(struct sd_state *state);
 int do_fuzz(struct sd_state *state, int *seed, int *loop);
 
 static int print_header(uint8_t *bfr) {
-	printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
+    printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
             bfr[0]&0x3f, bfr[0], bfr[1], bfr[2], bfr[3], bfr[4], bfr[5]);
-	return 0;
+    return 0;
 }
 
 
 static int send_cmdX(struct sd_state *state, 
-		uint8_t cmd,
-		uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4,
-		int print_size) {
-	uint8_t bfr[6];
-	uint8_t out_bfr[print_size];
-	int result;
-	static int run = 0;
-	memset(out_bfr, 0, sizeof(out_bfr));
-	cmd = (cmd&0x3f)|0x40;
-	bfr[0] = cmd;
-	bfr[1] = a1;
-	bfr[2] = a2;
-	bfr[3] = a3;
-	bfr[4] = a4;
-	bfr[5] = (crc7(bfr, 5)<<1)|1;
-	result = sd_txrx(state, bfr, sizeof(bfr), out_bfr, print_size);
-	if (result!=-1 && !(result&R1_ILLEGAL_COMMAND)) {
-		out_bfr[0] = result;
-		printf("Run %-4d  ", run);
-		print_header(bfr);
-		print_hex(out_bfr, print_size);
-	}
-	run++;
-	return result;
+        uint8_t cmd,
+        uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4,
+        int print_size) {
+    uint8_t bfr[6];
+    uint8_t out_bfr[print_size];
+    int result;
+    static int run = 0;
+    memset(out_bfr, 0, sizeof(out_bfr));
+    cmd = (cmd&0x3f)|0x40;
+    bfr[0] = cmd;
+    bfr[1] = a1;
+    bfr[2] = a2;
+    bfr[3] = a3;
+    bfr[4] = a4;
+    bfr[5] = (crc7(bfr, 5)<<1)|1;
+    result = sd_txrx(state, bfr, sizeof(bfr), out_bfr, print_size);
+    if (result!=-1 && !(result&R1_ILLEGAL_COMMAND)) {
+        out_bfr[0] = result;
+        printf("Run %-4d  ", run);
+        print_header(bfr);
+        print_hex(out_bfr, print_size);
+    }
+    run++;
+    return result;
 }
 
 
 static int do_get_csd_cid(struct sd_state *state) {
-	sd_reset(state, 2);
+    sd_reset(state, 2);
 
-	printf("CSD:\n");
-	send_cmdX(state, 9, 0, 0, 0, 0, 32);
-	printf("\n");
+    printf("CSD:\n");
+    send_cmdX(state, 9, 0, 0, 0, 0, 32);
+    printf("\n");
 
-	printf("CID:\n");
-	send_cmdX(state, 10, 0, 0, 0, 0, 32);
-	printf("\n");
-	return 0;
+    printf("CID:\n");
+    send_cmdX(state, 10, 0, 0, 0, 0, 32);
+    printf("\n");
+    return 0;
 }
 
 static int drain_nand_addrs(struct sd_state *state) {
@@ -266,9 +275,9 @@ static int print_help(char *name) {
 
 int main(int argc, char **argv) {
     int ret = 0;
-	struct sd_state *state;
-	int mode = -1;
-	int ch;
+    struct sd_state *state;
+    enum program_mode mode = mode_help;
+    int ch;
 
     int seed;
     int have_seed = 0;
@@ -280,9 +289,9 @@ int main(int argc, char **argv) {
     char debugger_filename[512];
 
 
-	srand(time(NULL));
+    srand(time(NULL));
 
-	state = sd_init(MISO_PIN, MOSI_PIN, CLK_PIN, CS_PIN,
+    state = sd_init(MISO_PIN, MOSI_PIN, CLK_PIN, CS_PIN,
                     DAT1_PIN, DAT2_PIN, POWER_PIN);
     if (!state)
         return 1;
@@ -291,14 +300,14 @@ int main(int argc, char **argv) {
             eim_get(fpga_r_ddr3_v_major),
             eim_get(fpga_r_ddr3_v_minor));
 
-	while ((ch = getopt(argc, argv, "vfchs:r:x:d:")) != -1) {
-		switch(ch) {
-		case 'c':
-			mode = 1;
-			break;
+    while ((ch = getopt(argc, argv, "vfchs:r:x:d:")) != -1) {
+        switch(ch) {
+        case 'c':
+            mode = mode_get_csd_cid;
+            break;
 
         case 'f':
-            mode = 0;
+            mode = mode_fuzz;
             break;
 
         case 's':
@@ -312,41 +321,41 @@ int main(int argc, char **argv) {
             break;
 
         case 'v':
-            mode = 3;
+            mode = mode_validate_file;
             break;
 
         case 'x':
             strncpy(prog_filename, optarg, sizeof(prog_filename)-1);
-            mode = 4;
+            mode = mode_execute_file;
             break;
 
         case 'd':
             strncpy(debugger_filename, optarg, sizeof(debugger_filename)-1);
-            mode = 5;
+            mode = mode_debugger;
             break;
 
-		case 'h':
+        case 'h':
         default:
             print_help(argv[0]);
-			return 0;
-			break;
-		}
-	}
+            return 0;
+            break;
+        }
+    }
 
-    if (mode == -1)
+    if (mode == mode_help)
         ret = print_help(argv[0]);
-    else if (mode == 0)
+    else if (mode == mode_fuzz)
         ret = do_fuzz(state, have_seed?&seed:NULL, have_loop?&loop:NULL);
-    else if (mode == 1)
-		ret = do_get_csd_cid(state);
-    else if (mode == 3)
+    else if (mode == mode_get_csd_cid)
+        ret = do_get_csd_cid(state);
+    else if (mode == mode_validate_file)
         ret = do_validate_file(state);
-    else if (mode == 4)
+    else if (mode == mode_execute_file)
         ret = do_execute_file(state, loop, seed, prog_filename);
-    else if (mode == 5)
+    else if (mode == mode_debugger)
         ret = do_debugger(state, debugger_filename);
 
-	//sd_deinit(&state);
+    //sd_deinit(&state);
 
-	return ret;
+    return ret;
 }
