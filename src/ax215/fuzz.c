@@ -101,11 +101,11 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize,
                         val = pools[pool_val0][reg];
 
                     file[i + 0] = 0x75;                 // mov SFR, #immediate
-                    file[i + 1] = pools[pool_sfr][reg]; // Dest register
+                    file[i + 1] = pools[pool_sfr][reg] | 0x80; // Dest register
                     file[i + 2] = val;                  // Immediate value
 
                     printf("    mov SFR_%02X, #0x%02x\n",
-                            pools[pool_sfr][reg], val);
+                            pools[pool_sfr][reg] | 0x80, val);
                 }
                 else {
                     printf("    nop\n");
