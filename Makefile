@@ -23,7 +23,8 @@
 CFLAGS=-O3 -Wall
 CC=gcc
 
-PROGRAM_SOURCES=TestBoot.bin dump-rom.bin blink-led.bin debugger.bin fuzzer.bin blink-led-ax215.bin
+PROGRAM_SOURCES=A5TestBoot.bin TestBoot.bin dump-rom.bin blink-led.bin \
+	debugger.bin fuzzer.bin blink-led-ax215.bin
 PROGRAMS=$(PROGRAM_SOURCES:.asm=.bin)
 
 DBG_OFFSET=31488
