@@ -295,6 +295,11 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (!have_seed)
+	    seed = rand();
+    if (!have_loop)
+	    loop = 0;
+
     if (mode == mode_help)
         ret = print_help(argv[0]);
     else if (mode == mode_fuzz)
