@@ -44,6 +44,7 @@ enum program_mode {
 
 int dbg_main(struct sd_state *state);
 int do_fuzz(struct sd_state *state, int *seed, int *loop);
+int do_execute_file(struct sd_state *state, int run, int seed, char *filename);
 
 static int print_header(uint8_t *bfr) {
     printf(" CMD %2d {%02x %02x %02x %02x %02x %02x}  ",
@@ -207,54 +208,6 @@ static int do_debugger(struct sd_state *state, char *filename) {
     return ret;
 }
 
-
-static int do_execute_file(struct sd_state *state,
-                           int run,
-                           int seed,
-                           char *filename) {
-    uint8_t response[560];
-    uint8_t file[512+8];
-    int ret;
-    int tries;
-
-    memset(response, 0, sizeof(response));
-    memset(file, 0xff, sizeof(file));
-    srand(seed);
-
-    // Load in the specified file
-    if (read_file(filename, file, 512))
-        return 1;
-
-    printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
-
-    // Actually enter factory mode (sends CMD63/APPO and waits for response)
-    ret = -1;
-    for (tries=0; ret<0 && tries<10; tries++) {
-        ret = sd_enter_factory_mode(state, run);
-        if (-1 == ret)
-            printf("Couldn't enter factory mode, trying again (%d/10)\n",
-                    tries+1);
-    }
-    if (-1 == ret) {
-        printf("Failed\n");
-        return -1;
-    }
-
-    sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
-    xmit_mmc_dat4(state, file, sizeof(file));
-    rcvr_spi(state, response, 1);
-    printf("Immediate code-load response: %02x\n", response[0]);
-
-    rcvr_mmc_dat1(state, response, sizeof(response));
-
-    printf("Result of factory mode: %d\n", ret);
-
-    printf("\nResponse (%02x):\n", response[0]);
-    print_hex(response+1, sizeof(response)-1);
-    sd_read_pins(state);
-
-    return 0;
-}
 
 
 static int print_help(char *name) {
