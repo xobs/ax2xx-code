@@ -27,7 +27,7 @@ PROGRAM_SOURCES=A5TestBoot.bin TestBoot.bin dump-rom.bin blink-led.bin \
 	debugger.bin fuzzer.bin blink-led-ax215.bin
 PROGRAMS=$(PROGRAM_SOURCES:.asm=.bin)
 
-DBG_OFFSET=31488
+DBG_OFFSET=18176
 
 all: as31 ax215 $(PROGRAMS)
 

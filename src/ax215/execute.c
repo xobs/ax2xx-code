@@ -45,13 +45,35 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
     return 0;
 }
 
+static int look_for_known_state(struct sd_state *state, int sleeptime) {
+    // Wait for some sign of life
+    int sd_pins = sd_read_pins(state);
+    int i;
+    uint8_t slow_response[512];
+    int changes = 0;
+    for (i = 0; i < sizeof(slow_response); i++) {
+        usleep(sleeptime);
+        slow_response[i] = sd_read_pins(state);
+        if (slow_response[i] != sd_pins) {
+            changes++;
+        }
+        sd_pins = slow_response[i];
+    }
+
+    printf("Observed %d changes:\n", changes);
+    print_hex(slow_response, sizeof(slow_response));
+    return changes;
+}
 
 int do_execute_file(struct sd_state *state,
                            int run,
                            int seed,
                            char *filename) {
     uint8_t response[560];
-    uint8_t file[512+8];
+    uint8_t file[512+(4*sizeof(uint16_t))];
+    uint8_t cmdsize = 6;
+    uint8_t cmd[cmdsize];
+    int i;
     int ret;
     int tries;
 
@@ -66,30 +88,50 @@ int do_execute_file(struct sd_state *state,
     printf("\n\nRun %-4d  Seed: %8d\n", run, seed);
 
     // Actually enter factory mode (sends CMD63/APPO and waits for response)
-    ret = -1;
-    for (tries=0; ret<0 && tries<10; tries++) {
-        ret = sd_enter_factory_mode(state, run);
-        if (-1 == ret)
-            printf("Couldn't enter factory mode, trying again (%d/10)\n",
-                    tries+1);
-    }
+    ret = sd_enter_factory_mode(state, run);
     if (-1 == ret) {
-        printf("Failed\n");
-        return -1;
+        printf("Couldn't enter factory mode\n");
+        return ret;
     }
 
+    // Transmit the file
     sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
     xmit_mmc_dat4(state, file, sizeof(file));
+
+    ret = rcvr_mmc_dat0_start(state, 100);
+    if (-1 == ret)
+        printf("DAT0 never started\n");
+    else
+        printf("Entered factory mode after %d tries\n", ret);
     rcvr_spi(state, response, 1);
-    printf("Immediate code-load response: %02x\n", response[0]);
 
-    rcvr_mmc_dat1(state, response, sizeof(response));
 
-    printf("Result of factory mode: %d\n", ret);
+    return look_for_known_state(state, 720);
 
-    printf("\nResponse (%02x):\n", response[0]);
-    print_hex(response+1, sizeof(response)-1);
-    sd_read_pins(state);
+    printf("Immediate code-load response:\n");
+    print_hex(response, 1);
+
+    for (i=0; i<cmdsize; i++)
+        cmd[i] = rand();
+    cmd[0] &= 0x3f;
+    cmd[0] |= 0x40;
+    cmd[0] = 0x40;
+    cmd[5] = (crc7(cmd, 5)<<1)|1;
+
+    printf("Transmitting data:\n");
+    print_hex(cmd, sizeof(cmd));
+    xmit_mmc_cmd(state, cmd, sizeof(cmd));
+    rcvr_spi(state, response, 1);
+
+
+    if (-1 == ret)
+        printf("No response\n");
+    else {
+        printf("Response after %d tries\n", ret);
+        rcvr_mmc_dat4(state, response, sizeof(response));
+        printf("Result of factory mode:\n");
+        print_hex(response, sizeof(response));
+    }
 
     return 0;
 }

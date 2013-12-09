@@ -58,6 +58,7 @@ static int patch_fuzzer(struct sd_state *state, uint8_t *file, int filesize,
     int i;
 
     total = 1 + (pools[pool_misc][pool_misc_totals] % SFR_SPOTS);
+    total = 2;
 
     // Patch the binary, and at the same time disassemble the code.
     // We look for 0xa5 opcodes, and patch these with our own custom commands.
