@@ -40,6 +40,7 @@
 enum execute_mode {
     dump_rom,
     enter_debugger,
+    known_state,
 };
 
 
@@ -59,6 +60,27 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
     ret = close(fd);
     if (-1 == ret)
         perror("Couldn't close file");
+    return 0;
+}
+
+int look_for_known_state(struct sd_state *state, int sleeptime)
+{
+    // Wait for some sign of life
+    int sd_pins = sd_read_pins(state);
+    int i;
+    uint8_t slow_response[512];
+    int changes = 0;
+    for (i = 0; i < sizeof(slow_response); i++) {
+        usleep(sleeptime);
+        slow_response[i] = sd_read_pins(state);
+        if (slow_response[i] != sd_pins) {
+            changes++;
+        }
+        sd_pins = slow_response[i];
+    }
+
+    printf("Observed %d changes:\n", changes);
+    print_hex(slow_response, sizeof(slow_response));
     return 0;
 }
 
@@ -206,24 +228,39 @@ bail:
     return 1;
 }
 
-int look_for_known_state(struct sd_state *state, int sleeptime) {
-    // Wait for some sign of life
-    int sd_pins = sd_read_pins(state);
+static int do_enter_debugger(struct sd_state *state)
+{
+    uint8_t response[5];
+    uint8_t cmdsize = 6;
+    uint8_t cmd[cmdsize];
     int i;
-    uint8_t slow_response[512];
-    int changes = 0;
-    for (i = 0; i < sizeof(slow_response); i++) {
-        usleep(sleeptime);
-        slow_response[i] = sd_read_pins(state);
-        if (slow_response[i] != sd_pins) {
-            changes++;
-        }
-        sd_pins = slow_response[i];
+    int ret = 0;
+
+    memset(response, 0, sizeof(response));
+
+    for (i=0; i<cmdsize; i++)
+        cmd[i] = rand();
+    cmd[0] &= 0x3f;
+    cmd[0] |= 0x40;
+    cmd[0] = 0x40;
+    cmd[5] = (crc7(cmd, 5)<<1)|1;
+
+    printf("Transmitting data:\n");
+    print_hex(cmd, sizeof(cmd));
+    xmit_mmc_cmd(state, cmd, sizeof(cmd));
+
+    ret = rcvr_mmc_dat0_start(state, 1024);
+    if (-1 == ret)
+        printf("No response\n");
+    else {
+        printf("Response after %d tries\n", ret);
+        rcvr_spi(state, response, sizeof(response));
+        //rcvr_mmc_dat4(state, response, sizeof(response));
+        printf("SD card said:\n");
+        print_hex(response, sizeof(response));
     }
 
-    printf("Observed %d changes:\n", changes);
-    print_hex(slow_response, sizeof(slow_response));
-    return changes;
+    return 0;
 }
 
 static void patch_file(uint8_t *file, int size) {
@@ -251,11 +288,8 @@ int do_one_execute_file(struct sd_state *state,
                            int seed,
                            enum execute_mode mode,
                            char *filename) {
-    uint8_t response[560];
+    uint8_t response[1];
     uint8_t file[512+(4*sizeof(uint16_t))];
-    uint8_t cmdsize = 6;
-    uint8_t cmd[cmdsize];
-    int i;
     int ret;
 
     memset(response, 0, sizeof(response));
@@ -288,34 +322,17 @@ int do_one_execute_file(struct sd_state *state,
         printf("Entered factory mode after %d tries\n", ret);
     rcvr_spi(state, response, 1);
 
-
-    if (mode == dump_rom)
-        return do_dump_rom(state, 2000);
-    //return look_for_known_state(state, 2000);
-
     printf("Immediate code-load response:\n");
     print_hex(response, 1);
 
-    for (i=0; i<cmdsize; i++)
-        cmd[i] = rand();
-    cmd[0] &= 0x3f;
-    cmd[0] |= 0x40;
-    cmd[0] = 0x40;
-    cmd[5] = (crc7(cmd, 5)<<1)|1;
 
-    printf("Transmitting data:\n");
-    print_hex(cmd, sizeof(cmd));
-    xmit_mmc_cmd(state, cmd, sizeof(cmd));
-    rcvr_spi(state, response, 1);
-
-
-    if (-1 == ret)
-        printf("No response\n");
-    else {
-        printf("Response after %d tries\n", ret);
-        rcvr_mmc_dat4(state, response, sizeof(response));
-        printf("Result of factory mode:\n");
-        print_hex(response, sizeof(response));
+    if (mode == dump_rom)
+        return do_dump_rom(state, 2000);
+    else if (mode == enter_debugger)
+        return do_enter_debugger(state);
+    else if (mode == known_state) {
+        do_enter_debugger(state);
+        return look_for_known_state(state, 2000);
     }
 
     return 0;
@@ -328,7 +345,7 @@ int do_execute_file(struct sd_state *state,
     int ret;
     do {
         ret = do_one_execute_file(state, run++, rand(),
-                enter_debugger, filename);
+                known_state, filename);
     } while (ret != 0);
     return 0;
 }

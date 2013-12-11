@@ -38,252 +38,95 @@
 ; will continue at an address immediately following this code section.
 reset_vector:
 	anl	0xDC, #0xFE
-	pop	ACC
-	pop	ACC
-	mov	A, #0x10
+	mov	A, #0x0C
 	push	ACC
 	mov	A, #0x47
 	push	ACC
-	reti			; Return from interrupt, ending up at 0x7b0c
-
+	reti			; Return from interrupt, ending up at 0x470c
 
 ;---------------------------------------------------------------------------
-.org 0x4710
+.org 0x470C
 start:
 
 	mov	IEN, #0		; Disable interrupts
 	mov	SP, #0x80	; Reset stack pointer
-	acall	setup_sd_rcv
-;	acall	reset_isrs
-	ljmp	dump_rom
-	acall	more_setup
 	ljmp	main		; Enter the main() loop
 
-; ---------------------------------------------------------------------------
-; SD interrupt handler.  Called from an interrupt context.
-;.org 0x7b80
-sdi_isr:
-	push	ACC
-	push	0x80
-	push	DPH
-	push	DPL
-	push	PSW
-	mov	PSW, #8
-	mov	SFR_80, #8
-	clr	SD_XMIT_STATE.0
-	clr	SD_XMIT_STATE.1
-	orl	0xE3, #1
-	anl	0xCE, #0xEC
 
-	; Get ready to jump to the command, stored in SDCMD
-	mov	A, SDCMD
+main:
+	lcall	receive_one_packet	; Grab the packet, leave it in
+					; the SFRs
 
-	; Double the CMD value, because ajmp opcodes are two-bytes
-	rl	A
+	mov	0x20, 0x30		; Put the incoming CMD in the outgoing
+					; buffer, so it's part of the response.
 
-	; Actually jump.  This jumps to 2*SDCMD
+	mov	A, 0x30			; Grab the command that was received
+	add	A, 0x30			; and multiply it by three, as ljmp
+	add	A, 0x30			; opcodes are three bytes.
+
 	mov	DPTR, #sdi_jumptable
 	jmp	@A+DPTR
-
-; ---------------------------------------------------------------------------
-
-setup_sd_rcv:
-	clr	0xA0.2
-	anl	0xE8, #0xFE
-	anl	0xE8, #0xFD
-	anl	0xE8, #0xFB
-	anl	0xE8, #0xF7
-	orl	0xDC, #4
-	orl	0xDC, #8
-	ret
-
-more_setup:
-	lcall	pause_a_while
-wait_for_packet_start:
-	mov	R5, #0
-	mov	A, 0xE8
-	jnb	ACC.0, wait_for_packet_start
-	anl	0xE8, #0xFE
-wait_for_packet_end:
-	jnb	0x90.4, wait_for_packet_end
-	nop
-
-	;;
-	anl	0xe8, #0xFD
-	mov	0x20, #2
-	mov	0x21, #5
-	mov	0x22, #32
-	mov	0x23, #66
-	mov	SD_DATL, #0xE8
-	mov	SD_DATH, #0x1F
-	mov	0xDE, #0x03
-	mov	0xDF, #0
-	mov	0xE7, #0x01
-
-;	anl	0xE8, #0xFB
-;	orl	0xE5, #0x40
-;	mov	0xD4, #7
-;	mov	0xD5, #3
-;	mov	0xE1, #99
-;	mov	0xE2, #101
-;	orl	0xDC, #1
-;
-;transmitting:
-;	mov	A, 0xE8
-;	jnb	ACC.1, transmitting
-;	anl	0xE8, #0xFD
-;	anl	0xDC, #0xFE
-;	anl	0xE5, #0xBF
-;	orl	0xDC, #2
-
-waiting:
-	sjmp waiting
-
-	ret
-
-; Point the ISR stored in DPTR to address 0x7b30
-; DPTR [in]: Address of the ISR to set
-set_isr:
-	mov	A, #0x02	; ljmp
-	movx	@DPTR, A
-
-	inc	DPTR
-	mov	A, #0x7b
-	movx	@DPTR, A
-
-	inc	DPTR
-	mov	A, #0x30
-	movx	@DPTR, A
-
-	ret
-
-; Wait for an SD packet to completely transfer
-;wait_for_packet:
-;	mov	A, SDSM
-;	anl	A, #0xC
-;	jnz	wait_for_packet
-;	ret
-
-
-; ---------------------------------------------------------------------------
-
-
-setup_sdport:
-	mov	0xd1, #0xe8
-	orl	0xe9, #1
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	orl	0xe9, #0x80
-	ret
-
-reset_sdport:
-	clr	EA
-	orl	0xd1, #1
-	orl	0xb9, #2
-wait_sd_ready:
-	jnb	0xe8.1, wait_sd_ready
-	clr	0xe8.1
-	ret
-
-reset_isrs:
-	; Set up ISR to call function at 0x7b3f.  We're interested
-	; in both interrupt 0 and interrupt 1.
-	; These fire whenever we get an SD command.
-	;mov	DPTR, #0x0003
-	;lcall	set_isr
-	;mov	DPTR, #0x0203
-	;lcall	set_isr
-
-	mov	DPTR, #0x0000	; IRQ0
-	mov	A, #0x32	; reti instruction
-	movx	@DPTR, A
-
-	mov	DPTR, #0x0003	; IRQ1
-	mov	A, #0x32	; reti instruction
-	movx	@DPTR, A
-
-	; Make IRQ2 and IRQ3 simply "reti"
-	mov	DPTR, #0x000b	; IRQ2
-	mov	A, #0x32	; reti instruction
-	movx	@DPTR, A
-
-	mov	DPTR, #0x0013	; IRQ3
-	mov	A, #0x32	; reti instruction
-	movx	@DPTR, A
-
-	mov	DPTR, #0x001b	; IRQ4
-	mov	A, #0x32	; reti instruction
-	movx	@DPTR, A
-
-	ret
-
-
 sdi_jumptable:
-	ajmp	cmd0
-	ajmp	cmd1
-	ajmp	cmd2
-	ajmp	sd3_SendCSD
+	ljmp	cmd0_null
+	ljmp	cmd1_hello
+	ljmp	cmd2_peek
+	ljmp	cmd3_poke
 
 
-cmd0:
-cmd1:
-cmd2:
-sd3_SendCSD:
-	jnb	SDSM.4, sd3_SendCSD
-	orl	0xCF, #0x10
-	mov	SD_DATL, #0xE8
-	mov	SD_DATH, #0x1F
-	orl	0xCE, #1
-	mov	SD_BYTES, #0xF
-	mov	0xE7, #0x71
-wait_for_csd_done:
-	jnb	SD_XMIT_STATE.2, wait_for_csd_done
-	clr	SD_XMIT_STATE.2
-	ajmp	return_from_sdi_irq
+cmd0_null:
+	mov	0x21, #0
+	mov	0x22, #0
+	mov	0x23, #0
+	mov	0x24, #0
+	ljmp	transmit_and_loop
+
+cmd1_hello:
+	mov	0x21, 0x31
+	mov	0x22, 0x32
+	mov	0x23, 0x33
+	mov	0x24, 0x34
+	ljmp	transmit_and_loop
+	
+cmd2_peek:
+	; Take the first two received bytes, and use them as DPTR
+	mov	DPH, 0x31	; DPH start src
+	mov	DPL, 0x32	; DPL start src
+	movx	A, @DPTR
+
+	mov	0x21, A
+	inc	DPTR
+
+	movx	A, @DPTR
+	mov	0x22, A
+	inc	DPTR
+
+	movx	A, @DPTR
+	mov	0x23, A
+	inc	DPTR
+
+	movx	A, @DPTR
+	mov	0x24, A
+
+	sjmp	transmit_and_loop
+
+cmd3_poke:
+	mov	DPH, 0x31
+	mov	DPL, 0x32
+	movx	A, @DPTR
+	mov	B, A		; Save the old value
+
+	mov	A, 0x33		; Copy the new value
+	movx	@DPTR, A
+
+	mov	0x23, B
+	mov	0x24, #0
+	sjmp    xmit_response
 
 
-return_from_sdi_irq:
-	pop	PSW
-	pop	DPL
-	pop	DPH
-	pop	0x80
-	pop	ACC
-	reti
+transmit_and_loop:
+	lcall	transmit_from_ram
+	ljmp	main
 
-
-;        lcall   wait_for_packet
-;        mov     0x31, SDCMD     ; Copy the incoming SD packet
-;        mov     0x20, SDI1      ; to an area of memory commonly used
-;        mov     0x21, SDI2      ; by the SD transmission engine.  Copy the
-;        mov     0x22, SDI3      ; incoming packet here as part of an echo-back
-;        mov     0x23, SDI4      ; program.
-;
-;        orl     SDSM, #1        ; Kick the SD state machine (what does this do?)
-
-exit_sdi_isr:
-	pop	PSW
-	pop	DPL
-	pop	DPH
-	pop	0x80
-	pop	ACC
-;	setb	SD_WAITING.1	; Indicate we have a command waiting
-	reti
-;
-;main_loop:
-;        mov     A, 0x31         ; Copy SD command register to accumulator
-;        cjne    A, #0x00, not_c00
-;        ajmp    cmd_null
-;not_c00:cjne    A, #0x01, not_c01
-;        ajmp    cmd_echo
-;not_c01:cjne    A, #0x02, not_c02
-;        ajmp    cmd_peek
-;not_c02:cjne    A, #0x03, not_c03
 ;        ajmp    cmd_poke
 ;not_c03:cjne    A, #0x04, not_c04
 ;        ajmp    cmd_jump
@@ -306,12 +149,6 @@ exit_sdi_isr:
 ;        ajmp    xmit_response
 ;
 ;; Send all zeroes
-;cmd_null:
-;        mov     0x20, #0
-;        mov     0x21, #0
-;        mov     0x22, #0
-;        mov     0x23, #0
-;        ajmp    xmit_response
 ;
 ;; Send an echo back
 ;cmd_echo:
@@ -401,35 +238,6 @@ exit_sdi_isr:
 ;        mov     0x22, #0xa5
 ;        mov     0x23, #0xa5
 ;        sjmp    xmit_response
-;
-;xmit_response:
-;        acall   reset_sdport    ; Set up the SD pins
-;
-;;        mov     SDDL, #0x74     ; Point the outgoing address at
-;;        mov     SDDH, #0x05     ; the contents of RAM_0x20..RAM_0x24
-;;
-;;        mov     SD_BYTES, #0x03     ; Output four [sic] bytes
-;;
-;;        mov     SD_XMIT, #0x71      ; Kick off the transfer
-;        mov     0xd4, #0x91
-;        mov     0xd5, #0
-;        mov     0xe1, #7
-;        mov     0xe2, #0
-;        orl     0xe5, #1
-;        orl     0xb9, #8
-;wait_xfer_done:
-;        jnb     0xe8.3, wait_xfer_done
-;        clr     0xe8.3
-;        anl     0xd1, #0xfe
-;        mov     0xcf, #4
-;
-;        sjmp    wait_for_next_command
-;
-;wait_for_next_command:
-;        clr     SD_WAITING.1
-;wait_sd_cmd:
-;        jnb     SD_WAITING.1, wait_sd_cmd
-;        ajmp    main_loop
 
 
 ; pause_a_while(while1, while2, while3)
@@ -449,38 +257,91 @@ top_of_pause:
 	;djnz	R7, top_of_pause
 	ret
 
-;====================== 
-; END OF ISR STUFF
-;====================== 
 
-main:
-	setb	0x22.0
-	mov	A, 0x31
-	jnz	do_something
-	mov	A, 0xB5
-	sjmp	main
-
-do_something:
-	clr	EA
-	mov	DPTR, #main_jumptable
-
-	; ljmp instructions are three bytes, so triple the cmd size
-	mov	A, 0x31
-	add	A, 0x31
-	add	A, 0x31
-	mov	0x31, #0
-	setb	EA
-	jmp	@A+DPTR
-
-main_jumptable:
-	ljmp	main_do_nothing
+; ===================== SD FUNCTIONS ===================== 
+; These functions allow you to transmit data over the SD bus, or
+; receive data back.  All functions are blocking, and will only
+; return when they are completely finished and the card is idle.
 
 
-main_do_nothing:
-	ljmp	main
+; void setup_sd_rcv(void)
+; Prepares the SD registers to accept an SD packet.
+; INPUT:	None
+; OUTPUT:	None
+setup_sd_rcv:
+	clr	0xA0.2
+	anl	0xE8, #0xF0
+	orl	0xDC, #4
+	orl	0xDC, #8
+	ret
+
+; void receive_one_packet(void)
+; Received a single four-byte-plus-command packet, and stores it in RAM,
+; at offsets 0x30 - 0x35.
+; RAM offset 0x30 contains the SD command, while offsets 0x31-0x34 contain
+; the data bytes.
+; Returns only once the bytes have been received.
+;
+; INPUT:	None
+; OUTPUT:	Command byte stored at 0x30
+;		Data bytes 1 - 4 stored at offsets 0x31 - 0x34
+receive_one_packet:
+	acall	setup_sd_rcv
+wait_for_packet_start:
+	mov	R5, #0
+	mov	A, 0xE8
+	jnb	ACC.0, wait_for_packet_start
+	anl	0xE8, #0xFE
+	orl	0xE3, #1
+wait_for_packet_end:
+	jnb	0x90.4, wait_for_packet_end
+	jb	0x90.0, wait_for_packet_start
+	mov	0x30, SDCMD
+	mov	0x31, SDI4
+	mov	0x32, SDI3
+	mov	0x33, SDI2
+	mov	0x34, SDI1
+	ret
+
+; void transmit_from_ram(void)
+; Transmits one four-byte-plus-command packet from RAM, located at
+; offset 0x20.  Make sure the command packet at offset 0x20 has its
+; start bit set (i.e. (byte & 0x7f)) so the receiving side knows when
+; the stream starts.
+; Returns once the packet has been completely transmitted.
+;
+; INPUT:	Command at offset 0x20, data at offsets 0x21-24
+; OUTPUT:	None
+transmit_from_ram:
+	anl	0xE8, #0xFD
+	mov	0x1f, #0x00
+	mov	SD_DATL, #0xE8
+	mov	SD_DATH, #0x12
+	mov	0xDE, #0x04
+	mov	0xDF, #0
+	mov	0xE7, #0xf1
+
+wait_for_xmit_done:
+	mov	A, 0xE8
+	jnb	ACC.1, wait_for_xmit_done
+	anl	0xE8, #0xFD
+	mov	SP, #0x80
+	ret
 
 
-; Debug routines
+
+; ===================== DEBUG FUNCTIONS ===================== 
+; These functions can be useful for figuring out what the card
+; is up to.  They are not used during normal operation.
+
+
+; void noreturn emit_known_stuff(void)
+; Emits a known pattern out the SD pins.  This can be useful for knowing
+; where code execution has reached, when you don't know how to use the
+; SPI bus.
+;
+; INPUT:	None
+; OUTPUT:	None
 emit_known_stuff:
 	mov	0xef, #0xff
 	nop
@@ -488,34 +349,15 @@ emit_known_stuff:
 	nop
 	mov	R5, #0xff
 	mov	R6, #0x20
-loop1:
-	djnz	R5, loop1
-	djnz	R6, loop1
+emit_known_loop1:
+	djnz	R5, emit_known_loop1
+	djnz	R6, emit_known_loop1
 	mov	0xef, #0x00
 	mov	R5, #0xff
 	mov	R6, #0x20
-loop2:
-	djnz	R5, loop2
-	djnz	R6, loop2
+emit_known_loop2:
+	djnz	R5, emit_known_loop2
+	djnz	R6, emit_known_loop2
 	sjmp	emit_known_stuff
 
-
-dump_rom:
-	mov	DPTR, #0
-dump_rom_top:
-	mov	0xef, #0xff
-	nop
-	nop
-	nop
-	mov	R5, #0xff
-	mov	R6, #0x20
-dump_loop1:
-	djnz	R5, dump_loop1
-	djnz	R6, dump_loop1
-	mov	0xef, #0xfe
-	mov	R5, #0xff
-	mov	R6, #0x20
-dump_loop2:
-	djnz	R5, dump_loop2
-	djnz	R6, dump_loop2
-	sjmp	dump_rom_top
+.org 0x4900

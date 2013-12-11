@@ -142,7 +142,7 @@
 .equ    SFR_FE, 0xFE
 .equ    SFR_FF, 0xFF
 
-.org 0x7b00
+.org 0x4700
 entry:
                 ljmp    relocate_pc
 
@@ -181,71 +181,71 @@ wait_for_spi_ready:                     ; CODE XREF: ROM:7B29j
                 jnb     ACC.0, wait_for_spi_ready ; Accumulator
                 anl     SFR_E8, #0xFE
 
-ROM_7B2F:                               ; CODE XREF: ROM:ROM_7B2Fj
-                jnb     SDSM.4, ROM_7B2F ; SD state machine
+ROM_472F:                               ; CODE XREF: ROM:ROM_472Fj
+                jnb     SDSM.4, ROM_472F ; SD state machine
                 mov     A, SFR_E6       ; SD Incoming Command
-                jz      ROM_7B56
+                jz      ROM_4756
                 mov     A, SFR_E6       ; SD Incoming Command
                 xrl     A, #0x14
-                jz      ROM_7BB2
+                jz      ROM_47B2
                 mov     A, SFR_E6       ; SD Incoming Command
                 xrl     A, #0x32
-                jz      ROM_7B5C
+                jz      ROM_475C
                 mov     A, SFR_E6       ; SD Incoming Command
                 xrl     A, #0x33
-                jz      ROM_7B60
+                jz      ROM_4760
                 mov     A, SFR_E6       ; SD Incoming Command
                 xrl     A, #9
-                jz      ROM_7B64
+                jz      ROM_4764
                 mov     A, SFR_E6       ; SD Incoming Command
                 xrl     A, #0x35
-                jz      ROM_7B68
-                ajmp    ROM_7C85
+                jz      ROM_4768
+                ljmp    ROM_4885
 ; ---------------------------------------------------------------------------
 
-ROM_7B56:                               ; CODE XREF: ROM:7B34j
+ROM_4756:                               ; CODE XREF: ROM:7B34j
                 clr     RAM_24.0
                 acall   xmit_something
                 ajmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7B5C:                               ; CODE XREF: ROM:7B40j
-                acall   ROM_7CA1
+ROM_475C:                               ; CODE XREF: ROM:7B40j
+                lcall   ROM_48A1
                 ajmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7B60:                               ; CODE XREF: ROM:7B46j
-                acall   ROM_7CC6
+ROM_4760:                               ; CODE XREF: ROM:7B46j
+                lcall   ROM_48C6
                 ajmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7B64:                               ; CODE XREF: ROM:7B4Cj
-                acall   ROM_7C32
+ROM_4764:                               ; CODE XREF: ROM:7B4Cj
+                lcall   ROM_4832
                 ajmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7B68:                               ; CODE XREF: ROM:7B52j
+ROM_4768:                               ; CODE XREF: ROM:7B52j
                 anl     SFR_E8, #0xFD
                 mov     RAM_20, #0
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
                 mov     SFR_D7, #0x1F   ; SD Outgoing Address / 4 (high)
-                jb      RAM_24.0, ROM_7B82
+                jb      RAM_24.0, ROM_4782
                 mov     SFR_DE, #0
                 mov     SFR_DF, #0
                 mov     SFR_E7, #0xF1 ; 'Â±' ; SD output state
-                sjmp    ROM_7B8E
+                sjmp    ROM_478E
 ; ---------------------------------------------------------------------------
 
-ROM_7B82:                               ; CODE XREF: ROM:7B74j
+ROM_4782:                               ; CODE XREF: ROM:7B74j
                 mov     RAM_23, #0
                 mov     SFR_DE, #3
                 mov     SFR_DF, #0
                 mov     SFR_E7, #1      ; SD output state
 
-ROM_7B8E:                               ; CODE XREF: ROM:7B80j
+ROM_478E:                               ; CODE XREF: ROM:7B80j
                                         ; ROM:7B90j
                 mov     A, SFR_E8
-                jnb     ACC.1, ROM_7B8E  ; Accumulator
+                jnb     ACC.1, ROM_478E  ; Accumulator
                 anl     SFR_E8, #0xFD
                 mov     SP, #SFR_80     ; Stack Pointer
                 ljmp    RESET           ; Power-on program execution start
@@ -266,13 +266,13 @@ xmit_something:                         ; CODE XREF: ROM:7B58p
 
 ; ---------------------------------------------------------------------------
 
-ROM_7BB2:                               ; CODE XREF: ROM:7B3Aj
-                jnb     SDSM.0, ROM_7BBA ; SD state machine
+ROM_47B2:                               ; CODE XREF: ROM:7B3Aj
+                jnb     SDSM.0, ROM_47BA ; SD state machine
                 orl     SFR_E3, #1
                 ajmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7BBA:                               ; CODE XREF: ROM:ROM_7BB2j
+ROM_47BA:                               ; CODE XREF: ROM:ROM_47B2j
                 anl     SFR_E8, #0xFD
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
                 mov     SFR_D7, #0x1F   ; SD Outgoing Address / 4 (high)
@@ -282,7 +282,7 @@ ROM_7BBA:                               ; CODE XREF: ROM:ROM_7BB2j
                 mov     R7, #0
                 mov     R6, #0
 
-ROM_7BD0:                               ; CODE XREF: ROM:7C02j
+ROM_47D0:                               ; CODE XREF: ROM:7C02j
                                         ; ROM:7C08j
                 anl     SFR_E8, #0xFB
                 mov     SFR_D4, R7
@@ -298,53 +298,53 @@ ROM_7BD0:                               ; CODE XREF: ROM:7C02j
                 mov     SFR_E2, #1
                 orl     SFR_DC, #1
 
-ROM_7BE9:                               ; CODE XREF: ROM:7BEBj
+ROM_47E9:                               ; CODE XREF: ROM:7BEBj
                 mov     A, SFR_E8
-                jnb     ACC.2, ROM_7BE9  ; Accumulator
+                jnb     ACC.2, ROM_47E9  ; Accumulator
                 mov     A, SFR_DC
                 anl     A, #0x20
-                jnz     ROM_7C0A
+                jnz     ROM_480A
                 mov     A, SFR_DC
                 anl     A, #0x10
-                jnz     ROM_7C0A
+                jnz     ROM_480A
                 mov     A, SFR_DC
-                jb      ACC.6, ROM_7C04  ; Accumulator
+                jb      ACC.6, ROM_4804  ; Accumulator
                 orl     SFR_DC, #2
-                ajmp    ROM_7BD0
+                ljmp    ROM_47D0
 ; ---------------------------------------------------------------------------
 
-ROM_7C04:                               ; CODE XREF: ROM:7BFCj
+ROM_4804:                               ; CODE XREF: ROM:7BFCj
                 inc     R5
                 orl     SFR_DC, #2
-                ajmp    ROM_7BD0
+                ljmp    ROM_47D0
 ; ---------------------------------------------------------------------------
 
-ROM_7C0A:                               ; CODE XREF: ROM:7BF2j
+ROM_480A:                               ; CODE XREF: ROM:7BF2j
                                         ; ROM:7BF8j
                 anl     SFR_E8, #0xF8
 
-ROM_7C0D:                               ; CODE XREF: ROM:7C11j
+ROM_480D:                               ; CODE XREF: ROM:7C11j
                 mov     A, SFR_E3
                 anl     A, #0xC
-                jnz     ROM_7C0D
+                jnz     ROM_480D
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
                 mov     SFR_D7, #0x1F   ; SD Outgoing Address / 4 (high)
                 mov     SFR_DE, #3
                 mov     SFR_DF, #0
                 mov     SFR_E7, #1      ; SD output state
 
-ROM_7C22:                               ; CODE XREF: ROM:7C24j
+ROM_4822:                               ; CODE XREF: ROM:7C24j
                 mov     A, SFR_E8
-                jnb     ACC.1, ROM_7C22  ; Accumulator
+                jnb     ACC.1, ROM_4822  ; Accumulator
                 anl     SFR_E8, #0xFD
                 anl     SFR_DC, #0xFE
                 orl     SFR_DC, #2
-                ajmp    wait_for_spi_ready
+                ljmp    wait_for_spi_ready
 
 ; =============== S U B R O U T I N E =======================================
 
 
-ROM_7C32:                               ; CODE XREF: ROM:ROM_7B64p
+ROM_4832:                               ; CODE XREF: ROM:ROM_4764p
                 .db 0xa5,  0x1d
                 mov     ER30, SDI1    ; SD Incoming Argument byte 0
                 mov     ER31, SDI2    ; SD Incoming Argument byte 1
@@ -369,37 +369,37 @@ ROM_7C32:                               ; CODE XREF: ROM:ROM_7B64p
                 mov     SFR_E2, ER21    ; Extended (32-bit) register 2, byte 1
                 orl     SFR_DC, #1
 
-ROM_7C73:                               ; CODE XREF: ROM_7C32+43j
+ROM_4873:                               ; CODE XREF: ROM_4832+43j
                 mov     A, SFR_E8
-                jnb     ACC.2, ROM_7C73  ; Accumulator
+                jnb     ACC.2, ROM_4873  ; Accumulator
                 anl     SFR_E8, #0xFB
                 anl     SFR_DC, #0xFE
                 anl     SFR_E5, #0xBF
                 orl     SFR_DC, #2
                 ret
-; End of function ROM_7C32
+; End of function ROM_4832
 
 ; ---------------------------------------------------------------------------
 
-ROM_7C85:                               ; CODE XREF: ROM:7B54j
-                jb      SDSM.0, ROM_7C9C ; SD state machine
+ROM_4885:                               ; CODE XREF: ROM:7B54j
+                jb      SDSM.0, ROM_489C ; SD state machine
                 anl     SFR_E8, #0xFD
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
                 mov     SFR_D7, #0x1F   ; SD Outgoing Address / 4 (high)
                 mov     SFR_DE, #3
                 mov     SFR_DF, #0
                 mov     SFR_E7, #1      ; SD output state
-                ajmp    wait_for_spi_ready
+                ljmp    wait_for_spi_ready
 ; ---------------------------------------------------------------------------
 
-ROM_7C9C:                               ; CODE XREF: ROM:ROM_7C85j
+ROM_489C:                               ; CODE XREF: ROM:ROM_4885j
                 orl     SFR_E3, #1
-                ajmp    wait_for_spi_ready
+                ljmp    wait_for_spi_ready
 
 ; =============== S U B R O U T I N E =======================================
 
 
-ROM_7CA1:                               ; CODE XREF: ROM:ROM_7B5Cp
+ROM_48A1:                               ; CODE XREF: ROM:ROM_475Cp
                 mov     A, SDI4       ; SD Incoming Argument byte 3
                 anl     SFR_E8, #0xFD
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
@@ -407,26 +407,26 @@ ROM_7CA1:                               ; CODE XREF: ROM:ROM_7B5Cp
                 mov     SFR_DE, #3
                 mov     SFR_DF, #0
                 mov     SFR_E7, #1      ; SD output state
-                acall   ROM_7CF0
+                acall   ROM_48F0
 
-ROM_7CB7:                               ; CODE XREF: ROM_7CA1+18j
+ROM_48B7:                               ; CODE XREF: ROM_48A1+18j
                 mov     A, SFR_E8
-                jnb     ACC.1, ROM_7CB7  ; Accumulator
+                jnb     ACC.1, ROM_48B7  ; Accumulator
                 anl     SFR_E8, #0xFD
                 anl     SFR_E8, #0xFE
                 orl     SFR_E3, #1
                 ret
-; End of function ROM_7CA1
+; End of function ROM_48A1
 
 
 ; =============== S U B R O U T I N E =======================================
 
 
-ROM_7CC6:                               ; CODE XREF: ROM:ROM_7B60p
+ROM_48C6:                               ; CODE XREF: ROM:ROM_4760p
                 mov     SFR_B4, SDI4  ; SD Incoming Argument byte 3
                 mov     SFR_A1, SDI3  ; SD Incoming Argument byte 2
-                mov     SFR_B0, SDI2  ; SD Incoming Argument byte 1
-                mov     SFR_B2, SDI1  ; SD Incoming Argument byte 0
+;                mov     SFR_B0, SDI2  ; SD Incoming Argument byte 1
+;                mov     SFR_B2, SDI1  ; SD Incoming Argument byte 0
                 mov     SFR_B1, #0
                 anl     SFR_E8, #0xFD
                 mov     SFR_D6, #0xE8 ; 'F' ; SD Outgoing Address / 4 (low)
@@ -435,31 +435,26 @@ ROM_7CC6:                               ; CODE XREF: ROM:ROM_7B60p
                 mov     SFR_DF, #0
                 mov     SFR_E7, #1      ; SD output state
 
-ROM_7CE7:                               ; CODE XREF: ROM_7CC6+23j
+ROM_48E7:                               ; CODE XREF: ROM_48C6+23j
                 mov     A, SFR_E8
-                jnb     ACC.1, ROM_7CE7  ; Accumulator
+                jnb     ACC.1, ROM_48E7  ; Accumulator
                 anl     SFR_E8, #0xFD
                 ret
-; End of function ROM_7CC6
+; End of function ROM_48C6
 
 
 ; =============== S U B R O U T I N E =======================================
 
 
-ROM_7CF0:                               ; CODE XREF: ROM_7CA1+14p
+ROM_48F0:                               ; CODE XREF: ROM_48A1+14p
                 mov     SFR_B3, A
                 setb    SFR_B0.3
 
-ROM_7CF4:                               ; CODE XREF: ROM_7CF0:ROM_7CF4j
-                jnb     SFR_B0.3, ROM_7CF4
+ROM_48F4:                               ; CODE XREF: ROM_48F0:ROM_48F4j
+                jnb     SFR_B0.3, ROM_48F4
                 clr     SFR_B0.3
                 ret
-; End of function ROM_7CF0
+; End of function ROM_48F0
 
 ; ---------------------------------------------------------------------------
-                .byte 0xFF
-                .byte 0xFF
-                .byte 0xFF
-                .byte    2
-                .byte 0x15
-                .byte    0
+.org 0x4900
