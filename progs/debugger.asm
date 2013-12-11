@@ -55,7 +55,7 @@ start:
 	mov	SP, #0x80	; Reset stack pointer
 	acall	setup_sd_rcv
 ;	acall	reset_isrs
-	ljmp	emit_known_stuff
+	ljmp	dump_rom
 	acall	more_setup
 	ljmp	main		; Enter the main() loop
 
@@ -486,15 +486,36 @@ emit_known_stuff:
 	nop
 	nop
 	nop
-	mov	R5, #0x37
-	mov	R6, #0x16
+	mov	R5, #0xff
+	mov	R6, #0x20
 loop1:
 	djnz	R5, loop1
 	djnz	R6, loop1
 	mov	0xef, #0x00
-	mov	R5, #0x37
-	mov	R6, #0x16
+	mov	R5, #0xff
+	mov	R6, #0x20
 loop2:
 	djnz	R5, loop2
 	djnz	R6, loop2
 	sjmp	emit_known_stuff
+
+
+dump_rom:
+	mov	DPTR, #0
+dump_rom_top:
+	mov	0xef, #0xff
+	nop
+	nop
+	nop
+	mov	R5, #0xff
+	mov	R6, #0x20
+dump_loop1:
+	djnz	R5, dump_loop1
+	djnz	R6, dump_loop1
+	mov	0xef, #0xfe
+	mov	R5, #0xff
+	mov	R6, #0x20
+dump_loop2:
+	djnz	R5, dump_loop2
+	djnz	R6, dump_loop2
+	sjmp	dump_rom_top

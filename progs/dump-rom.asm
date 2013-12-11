@@ -1,187 +1,137 @@
-.equ    IEN0, 0xA8
-.equ    SDICMD, 0x8D
+.equ	IEN, 0xA8
 
-.equ    SDOSTATE, 0x98
+.equ	SFR_80, 0x80
+.equ	SD_DATL, 0xD6
+.equ	SD_DATH, 0xD7
 
-.equ    SDOADDRL, 0x96
-.equ    SDOADDRH, 0x97
+.equ	SD_BYTES, 0xDE  ; SD byte count
 
-.equ    SDOBYTESL, 0x93
-.equ    SDOBYTESH, 0x94
+.equ	SDDIR, 0xEB
+.equ	SDSM, 0x90
 
-.equ    SDODMAADDRL, 0x99
-.equ    SDODMAADDRH, 0x9A
+.equ	SDCMD, 0xE6
+.equ	SD_XMIT, 0xE7
+.equ	SD_XMIT_STATE, 0xE8
+.equ	SDI1, 0xE9
+.equ	SDI2, 0xEA
+.equ	SDI3, 0xEB
+.equ	SDI4, 0xEC
 
-.equ    SDODMABYTESL, 0x91
-.equ    SDODMABYTESH, 0x92
+.equ	RESET, 0
+.equ	PORT1, 0xF6
 
-.equ    SDOS, 0x88
-.equ    SDDIR, 0xEB
-.equ    FSR_80, 0x80
-.equ    FSR_8E, 0x8E
-.equ    FSR_90, 0x90
-.equ    FSR_D8, 0xD8
-.equ    FSR_EB, 0xEB
-.equ    FSR_FC, 0xFC
+.equ	NPS, 0x9e
 
-.equ    RESET, 0
+.equ	LED_STATE, 0x40
 
-.org 0x2900
+.equ	NCMD, 0xa1
+.equ	NSRCL, 0xa2
+.equ	NSRCH, 0xa3
 
-; This gets called from an interrupt.
+.equ	SD_WAITING, 0x24
+
+.org 0x4700
+; This gets called from the ROM.
+; ---------------------------------------------------------------------------
+; This gets called from an interrupt context, from within ROM.  We want to
+; manipulate the stack so that when we return from interrupt, code execution
+; will continue at an address immediately following this code section.
+reset_vector:
+	anl	0xDC, #0xFE
+	pop	ACC
+	pop	ACC
+	mov	A, #0x10
+	push	ACC
+	mov	A, #0x47
+	push	ACC
+	reti			; Return from interrupt, ending up at 0x7b0c
+
+
+;---------------------------------------------------------------------------
+.org 0x4710
 start:
-        ljmp    reset_vector
+
+	mov	IEN, #0		; Disable interrupts
+	mov	SP, #0x80	; Reset stack pointer
+	;mov	0xb4, #0x6b
+	ljmp	dump_rom
 
 
-setup_outputs:
-        mov     FSR_D8, #0xE8 ; 'F'
-        mov     FSR_EB, FSR_FC
-        anl     FSR_8E, #0xFE
-        anl     FSR_8E, #0xFD
-        anl     FSR_8E, #0xFB
-        anl     FSR_8E, #0xF7
-        anl     FSR_80, #0x7F
-        orl     FSR_80, #4
-        orl     FSR_80, #8
-        ret
-; ---------------------------------------------------------------------------
-reset_vector:                            ; CODE XREF: ROM:2900
-        anl     FSR_80, #0xFE
-        orl     FSR_80, #2
-        pop     PSW             ; Program Status Word
-        pop     ACC             ; Accumulator
-        mov     A, #0x32 ; '2'
-        push    ACC             ; Accumulator
-        mov     A, #0x29 ; ')'
-        push    ACC             ; Accumulator
-        reti
-; ---------------------------------------------------------------------------
 
+dump_rom:
+	mov	0xef, #0x00
+	lcall	pause
+	;mov	DPTR, #0x4500
+	mov	DPTR, #0
+	nop
+	nop
+	nop
 
-        mov     IEN0, #0      ; Interrupt Enable Register 0
-        mov     SP, #0x80     ; Stack Pointer
-        acall   setup_outputs
-        mov     SDDIR, #0xff
-        sjmp    do_things
+dump_rom_next_byte:
+	clr	C
+	clr	A
+	movx	A, @DPTR
+	;movc	A, @A+DPTR
+	mov	R4, #8
 
+bit_shift_top:
+	mov	R5, #0x08
+	jnb	ACC.7, bit_is_zero
+	mov	R5, #0x0a
+bit_is_zero:
+	mov	0xef, R5
+	lcall	pause
 
-pause_a_while:
-        mov     R2, #0x00
-        mov     R3, #0
-        mov     R4, #0x02
-top_of_pause:
-        djnz    R2, top_of_pause                      
-        djnz    R3, top_of_pause
-        djnz    R4, top_of_pause
-        ret
+	mov	0xef, #0x00
+	lcall	pause
+	rl	A
+	djnz	R4, bit_shift_top
 
-memsetx: ; memsetx(addr[l], addr[h], val, count)
-        mov     DPL, R0
-        mov     DPH, R1
-        mov     A, R2
-        inc     R3      ; Get djnz to work
+	lcall	pause
+	ljmp	dump_rom_next_byte
 
-memsetx_loop:
-        movx    @DPTR, A
-        inc     DPTR
-        djnz    R3, memsetx_loop
-        ret
-
-
-;code_to_ext: ; code_to_ext(src[l], src[h], dst[l], dst[h], count)
-;        inc     R4
+long_pause:
+pause:
+	mov	R6, #0xff
+	mov	R7, #0x30
+	mov	R3, #0x01
+pause_loop:
+	djnz	R6, pause_loop
+	djnz	R7, pause_loop
+	djnz	R3, pause_loop
+	ret
 ;
-;code_to_ext_loop:
-;        mov     DPL, R0
-;        mov     DPH, R1
-;        clr     A
-;        movc    A, @A+DPTR
-;        mov     DPL, R2
-;        mov     DPH, R3
-;        movx    @DPTR, A
-;
-;        inc     R0
-;        mov     A, R0
-;        jnz     code_to_ext_skip_inc_r1
-;        inc     R1
-;code_to_ext_skip_inc_r1:
-;
-;        inc     R2
-;        mov     A, R2
-;        jnz     code_to_ext_skip_inc_r3
-;        inc     R3
-;code_to_ext_skip_inc_r3:
-;
-;        djnz    R4, code_to_ext_loop
-;        ret
+;long_pause:
+;	mov	R6, #0xff
+;	mov	R7, #0x50
+;	mov	R3, #0x01
+;long_pause_loop:
+;	djnz	R6, long_pause_loop
+;	djnz	R7, long_pause_loop
+;	djnz	R3, long_pause_loop
+;	ret
 
+.org 0x4780
+	.db	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07
+	.db	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
 
-memcpy_to_zero: ; memcpy_to_zero(src[l], src[h], page, count)
-        inc     R3
-        mov     R7, #0
+	.db	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17
+	.db	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
 
-memcpy_to_zero_one_byte:
-        mov     DPL, R0
-        mov     DPH, R1
-        movx    A, @DPTR
+	.db	0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27
+	.db	0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f
 
-        mov     DPL, R7
-        mov     DPH, R2
-        movx    @DPTR, A
+	.db	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37
+	.db	0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f
 
-        inc     R7
-        inc     R0
-        mov     A, R0
-        jnz     memcpy_to_zero_skip_inc_r1
-        inc     R1
-memcpy_to_zero_skip_inc_r1:
-        djnz    R3, memcpy_to_zero_one_byte
-        ret
+	.db	0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47
+	.db	0x48, 0x49, 0x4a, 0x4b, 0x4c, 0x4d, 0x4e, 0x4f
 
+	.db	0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57
+	.db	0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d, 0x5e, 0x5f
 
-do_things:
-;        mov     R0, #0
-;        mov     R1, #0
-;        mov     R2, #0x77
-;        mov     R3, #0xff
-;        lcall   memsetx
-;
-;        mov     R0, #0x00
-;        mov     R1, #1
-;        mov     R2, #0x77
-;        mov     R3, #0xff
-;        lcall   memsetx
-;
-;        mov     R0, #0
-;        mov     R1, #0
-;        mov     R2, #0x00
-;        mov     R3, #0
-;        mov     R4, #0xff
-;        lcall   code_to_ext
-        mov     R0, #0x00
-        mov     R1, #0xa5
-        mov     R2, #0
-        mov     R3, #0xff
-        lcall   memcpy_to_zero
+	.db	0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67
+	.db	0x68, 0x69, 0x6a, 0x6b, 0x6c, 0x6d, 0x6e, 0x6f
 
-        mov     R0, #0x00
-        mov     R1, #0xa6
-        mov     R2, #1
-        mov     R3, #0xff
-        lcall   memcpy_to_zero
-
-        lcall   pause_a_while
-        mov     SDOADDRL, #0x00     ; SD Outgoing Address>>2
-        mov     SDOADDRH, #0x01     ; SD Outgoing Address
-        mov     SDOBYTESL, #0xff    ; SD Outgoing bytes (low)
-        mov     SDOBYTESH, #1       ; SD Outgoing bytes (high)
-        mov     SDOS, #0x71            ; Kick off the transfer
-
-;        mov     SDODMAADDRL, #0    ; SD Outgoing DMA Address (low)
-;        mov     SDODMAADDRH, #0    ; SD Outgoing DMA Address (high)
-;        mov     SDODMABYTESL, #7   ; SD Outgoing DMA Bytes (low)
-;        mov     SDODMABYTESH, #0   ; SD Outgoing DMA Bytes (high)
-;        orl     SDOSTATE, #1       ; SD Outgoing State
-
-inf_loop:
-        sjmp    inf_loop
+	.db	0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77
+	.db	0x78, 0x79, 0x7a, 0x7b, 0x7c, 0x7d, 0x7e, 0x7f
