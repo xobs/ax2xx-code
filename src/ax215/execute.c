@@ -63,8 +63,7 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
     return 0;
 }
 
-int look_for_known_state(struct sd_state *state, int sleeptime)
-{
+static int look_for_known_state(struct sd_state *state, int sleeptime) {
     // Wait for some sign of life
     int sd_pins = sd_read_pins(state);
     int i;
