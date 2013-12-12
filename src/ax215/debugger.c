@@ -14,7 +14,7 @@
 #include "crc-16.h"
 #include "nand.h"
 
-#define DBG_PROMPT "AX211> "
+#define DBG_PROMPT "AX215> "
 #define PROGRAM_OFFSET 0x4700
 
 struct dbg {
@@ -38,8 +38,8 @@ enum protocol_code {
     cmd_poke = 3,
     cmd_jump = 4,
     cmd_nand = 5,
-    cmd_sfr_set = 6,
-    cmd_sfr_get = 7,
+    cmd_sfr_get = 6,
+    cmd_sfr_set = 7,
     cmd_ext_op  = 8,
 };
 
@@ -99,7 +99,7 @@ static struct debug_command debug_commands[] = {
         .name = "dumprom",
         .func = dbg_do_dump_rom,
         .desc = "Dump all of ROM to a file",
-        .help = "Dumps all of the AX211's 16 kB to a file.\n"
+        .help = "Dumps all of the AX215's 16 kB to a file.\n"
                 "Note that, for some reason, the first 0x200 bytes "
                 "cannot be read.\n",
     },
@@ -173,8 +173,8 @@ static struct debug_command debug_commands[] = {
     {
         .name = "reset",
         .func = dbg_do_reset,
-        .desc = "Reset the AX211 card",
-        .help = "Call to reset/restart the AX211 CPU\n",
+        .desc = "Reset the AX215 card",
+        .help = "Call to reset/restart the AX215 CPU\n",
     },
     {
         .name = "help",
@@ -189,29 +189,28 @@ static struct debug_command debug_commands[] = {
 
 static int dbg_txrx(struct dbg *dbg, enum protocol_code code,
                     uint8_t args[4], uint8_t *out, int outsize) {
-    uint8_t ret[outsize+1]; // Two extra bytes for start and crc7
     uint8_t bfr[6];
     int tries;
 
-    memset(ret, 0, sizeof(ret));
     memset(out, 0, outsize);
 
-    code = (code&0x3f)|0x40;
-    bfr[0] = code;
+    /* Construct the SD packet, with CRC7 at the end */
+    bfr[0] = (code & 0x3f) | 0x40;
     bfr[1] = args[0];
     bfr[2] = args[1];
     bfr[3] = args[2];
     bfr[4] = args[3];
-    bfr[5] = (crc7(bfr, 5)<<1)|1;
+    bfr[5] = (crc7(bfr, 5) << 1) | 1;
 
     xmit_mmc_cmd(dbg->sd, bfr, sizeof(bfr));
+
+    /* Get the response */
     tries = rcvr_mmc_cmd_start(dbg->sd, 1024);
     if (tries == -1) {
         printf("Never got start!\n");
         return -1;
     }
-    rcvr_mmc_cmd(dbg->sd, ret, sizeof(ret));
-    memcpy(out, ret+1, outsize);
+    rcvr_mmc_cmd(dbg->sd, out, outsize);
     return 0;
 }
 
@@ -222,8 +221,8 @@ int xram_set(struct dbg *dbg, int offset, uint8_t val) {
     uint8_t args[4];
     uint8_t bfr[5];
 
-    src_hi = (offset>>8)&0xff;
-    src_lo = (offset)&0xff;
+    src_hi = (offset >> 8) & 0xff;
+    src_lo = (offset) & 0xff;
 
     args[0] = src_hi;
     args[1] = src_lo;
@@ -231,7 +230,7 @@ int xram_set(struct dbg *dbg, int offset, uint8_t val) {
     args[3] = 0;
     if (dbg_txrx(dbg, cmd_poke, args, bfr, sizeof(bfr)))
         return -1;
-    return bfr[0];
+    return bfr[1];
 }
 
 // Set a value in RAM (or SFR)
@@ -246,18 +245,18 @@ static int ram_set(struct dbg *dbg, uint8_t offset, uint8_t val) {
 static int xram_get(struct dbg *dbg, uint8_t *buf,
                         int offset, int count) {
     int ret;
-    while (count>0) {
+    while (count > 0) {
         uint8_t args[4];
         uint8_t out[5];
-        args[0] = (offset>>8)&0xff;
-        args[1] = (offset>>0)&0xff;
+        args[0] = (offset >> 8) & 0xff;
+        args[1] = (offset >> 0) & 0xff;
         ret = dbg_txrx(dbg, cmd_peek, args, out, sizeof(out));
         if (ret)
             return ret;
-        memcpy(buf, out, (count>4?4:count));
-        buf+=4;
-        offset+=4;
-        count-=4;
+        memcpy(buf, out + 1, (count > 4 ? 4 : count));
+        buf    += 4;
+        offset += 4;
+        count  -= 4;
     }
     return 0;
 }
@@ -285,8 +284,8 @@ static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
     }
 
     xram_set(dbg, dbg->ext_op_offset, 0xa5);
-    xram_set(dbg, dbg->ext_op_offset+1, op1);
-    xram_set(dbg, dbg->ext_op_offset+2, op2);
+    xram_set(dbg, dbg->ext_op_offset + 1, op1);
+    xram_set(dbg, dbg->ext_op_offset + 2, op2);
 
     memset(cmd, 0, sizeof(cmd));
     ret = dbg_txrx(dbg, cmd_ext_op, cmd, bfr, sizeof(bfr));
@@ -306,13 +305,13 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
     while ((ch = getopt(argc, argv, "dw:r:x:")) != -1) {
         switch(ch) {
             case 'd':
-                for (sfr=0; sfr<=127; sfr++) {
+                for (sfr = 0; sfr <= 127; sfr++) {
                     uint8_t cmd[4];
                     uint8_t bfr[5];
-                    xram_set(dbg, dbg->read_sfr_offset, sfr+offset);
+                    xram_set(dbg, dbg->read_sfr_offset, sfr + offset);
                     memset(cmd, 0, sizeof(cmd));
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                    sfr_table[sfr] = bfr[0];
+                    sfr_table[sfr] = bfr[1];
                 }
                 print_hex_offset(sfr_table, sizeof(sfr_table), offset);
                 break;
@@ -363,19 +362,19 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                     else if (ch == 'x') {
                         uint8_t num[4];
 
-                        num[0] = bfr[0];
+                        num[0] = bfr[1];
 
                         xram_set(dbg, dbg->read_sfr_offset, sfr+1);
                         dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[1] = bfr[0];
+                        num[1] = bfr[2];
 
                         xram_set(dbg, dbg->read_sfr_offset, sfr+2);
                         dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[2] = bfr[0];
+                        num[2] = bfr[3];
 
                         xram_set(dbg, dbg->read_sfr_offset, sfr+3);
                         dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[3] = bfr[0];
+                        num[3] = bfr[4];
 
                         printf("%s_%02X: %02x%02x%02x%02x\n", offset?"SFR":"RAM",
                                 sfr, num[3], num[2], num[1], num[0]);
@@ -415,17 +414,17 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
                 break;
 
             case 'w': {
-                    uint32_t src; // Source address in the AX211
-                    uint32_t dst; // Destination address in NAND
+                    uint32_t src; // Source address in the AX215
+//                    uint32_t dst; // Destination address in NAND
                     uint8_t ram_buffer[512+3];
                     int ram_bytes = sizeof(ram_buffer)-3;
                     uint16_t crc;
                     char *next;
 
                     src = strtoul(optarg, &next, 0);
-                    dst = 0;
-                    if (next)
-                        dst = strtoul(next+1, NULL, 0);
+//                    dst = 0;
+//                    if (next)
+//                        dst = strtoul(next+1, NULL, 0);
 
                     xram_get(dbg, ram_buffer, src, ram_bytes);
                     crc = crc16(ram_buffer, ram_bytes);
@@ -519,8 +518,8 @@ static int dbg_do_hello(struct dbg *dbg, int argc, char **argv) {
 
     dbg_txrx(dbg, cmd_hello, args, response, sizeof(response));
 
-    printf("CPU -> AX211: {%02x %02x %02x %02x}\n", args[0], args[1], args[2], args[3]);
-    printf("CPU <- AX211: {%02x %02x %02x %02x}\n", response[0], response[1], response[2], response[3]);
+    printf("CPU -> AX215: {%02x %02x %02x %02x}\n", args[0], args[1], args[2], args[3]);
+    printf("CPU <- AX215: {%02x %02x %02x %02x}\n", response[0], response[1], response[2], response[3]);
 
     return 0;
 }
@@ -572,7 +571,7 @@ static int dbg_do_peek(struct dbg *dbg, int argc, char **argv) {
     cnt = strtoul(argv[2], NULL, 0);
 
     if (src > 16384) {
-        printf("AX211 only has 16384 bytes of RAM\n");
+        printf("AX215 only has 16384 bytes of RAM\n");
         return -ERANGE;
     }
     if ((src+cnt) > 16384) {
@@ -763,46 +762,38 @@ static int find_fixups(struct dbg *dbg) {
         printf("Failed to dump program memory\n");
         return ret;
     }
-    printf("Program memory (0x%x - 0x%x):\n", PROGRAM_OFFSET, PROGRAM_OFFSET+512);
-    print_hex(program_memory, sizeof(program_memory));
 
-
-/*
-    uint8_t whole_memory[0x2e00];
-    memset(whole_memory, 0, sizeof(whole_memory));
-    ret = xram_get(dbg, whole_memory, 0, sizeof(whole_memory));
-    if (ret) {
-        printf("Failed to get whole memory\n");
-        return ret;
-    }
-    printf("Whole memory (0x0000 - 0x%x):\n", sizeof(whole_memory));
-    print_hex(whole_memory, sizeof(whole_memory));
-*/
-
-
-    for (i=0; i<sizeof(program_memory); i++) {
+    for (i = 0; i < sizeof(program_memory); i++) {
         // Special charachter for our detection.
         if (program_memory[i] == 0xa5
-            && program_memory[i+1] == 0x60
-            && program_memory[i+2] == 0x61) {
+            && program_memory[i + 1] == 0x60
+            && program_memory[i + 2] == 0x61) {
             found_sfr_get = 1;
-            xram_set(dbg, PROGRAM_OFFSET+i, 0x85);  // mov
-            dbg->read_sfr_offset = PROGRAM_OFFSET+i+1;
-            xram_set(dbg, PROGRAM_OFFSET+i+2, 0x20);  // Destination register
+            /*
+             * Patch program to read:
+             *      mov     [source_sfr], 0x21
+             */
+            xram_set(dbg, PROGRAM_OFFSET + i, 0x85);        // mov opcode
+            dbg->read_sfr_offset = PROGRAM_OFFSET + i + 1;  // Source RAM
+            xram_set(dbg, PROGRAM_OFFSET + i + 2, 0x21);    // Target address
         }
         if (program_memory[i] == 0xa5
-            && program_memory[i+1] == 0x62
-            && program_memory[i+2] == 0x63) {
+            && program_memory[i + 1] == 0x62
+            && program_memory[i + 2] == 0x63) {
             found_sfr_set = 1;
-            xram_set(dbg, PROGRAM_OFFSET+i, 0x85);  // mov
-            xram_set(dbg, PROGRAM_OFFSET+i+1, 0x20);  // Source register
-            dbg->write_sfr_offset = PROGRAM_OFFSET+i+2;
+            /*
+             * Patch program to read:
+             *      mov     0x31, [destination_sfr]
+             */
+            xram_set(dbg, PROGRAM_OFFSET + i, 0x85);        // mov opcode
+            xram_set(dbg, PROGRAM_OFFSET + i + 1, 0x31);    // Source register
+            dbg->write_sfr_offset = PROGRAM_OFFSET + i + 2; // Value
         }
         if (program_memory[i] == 0xa5
-            && program_memory[i+1] == 0x64
-            && program_memory[i+2] == 0x65) {
+            && program_memory[i + 1] == 0x64
+            && program_memory[i + 2] == 0x65) {
             found_ext_op = 1;
-            dbg->ext_op_offset = PROGRAM_OFFSET+i;
+            dbg->ext_op_offset = PROGRAM_OFFSET + i;
         }
     }
 
@@ -819,26 +810,36 @@ static int find_fixups(struct dbg *dbg) {
         printf(" [couldn't find ext_op opcodes] ");
     }
     printf("Done\n");
+
+    printf("Program memory (0x%x - 0x%x):\n",
+            PROGRAM_OFFSET, PROGRAM_OFFSET + sizeof(program_memory));
+    print_hex(program_memory, sizeof(program_memory));
+
     return ret;
 }
 
 
 static int validate_communication(struct dbg *dbg) {
-    uint8_t args[4] = {'H', 'E', 'L', 'O'};
-    uint8_t response[5];
-
+    int i;
     printf("Checking card communication... ");
-    dbg_txrx(dbg, cmd_hello, args, response, sizeof(response));
 
-    if (response[0] != args[0]
-            || response[1] != args[1]
-            || response[2] != args[2]
-            || response[3] != args[3]) {
-        printf("Error: sent 0x%02x%02x%02x%02x, ",
-            args[0], args[1], args[2], args[3]);
-        printf("received 0x%02x%02x%02x%02x\n",
-            response[0], response[1], response[2], response[3]);
-        return -1;
+    for (i = 1; i <= 2; i++) {
+        uint8_t args[4] = {'H', 'E', 'L', 'O'};
+        uint8_t response[5];
+
+        printf("%d... ", i);
+        dbg_txrx(dbg, cmd_hello, args, response, sizeof(response));
+
+        if (response[1] != args[0]
+                || response[2] != args[1]
+                || response[3] != args[2]
+                || response[4] != args[3]) {
+            printf("Error: sent 0x%02x%02x%02x%02x, ",
+                args[0], args[1], args[2], args[3]);
+            printf("received 0x%02x%02x%02x%02x\n",
+                response[1], response[2], response[3], response[4]);
+            return -1;
+        }
     }
     printf("Okay\n");
 

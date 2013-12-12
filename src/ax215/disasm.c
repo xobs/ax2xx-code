@@ -43,7 +43,7 @@ uint8_t nextbyte(uint8_t *bfr, int *addr) {
 /* longaddr
  *
  */
-static int longaddr_print(uint8_t op1, uint8_t op2, char *label)
+static int longaddr_print(uint8_t op1, uint8_t op2, char *label, int label_sz)
 {
 	int addr;
 	
@@ -51,7 +51,7 @@ static int longaddr_print(uint8_t op1, uint8_t op2, char *label)
 	addr = ((((int)op1)<<8) | op2);
 	
 	/* form label string */
-	sprintf(label, "label_%d", lbl[addr]);
+	snprintf(label, label_sz, "label_%d", lbl[addr]);
 	
 	return lbl[addr];
 }
@@ -159,7 +159,7 @@ static int dis_inst2(FILE *ofile, uint8_t *bfr, int addr)
 {
 	uint8_t opcode;
 	uint8_t op1, op2;
-	char label[6];
+	char label[64];
 	char name[6];
 	char name2[5];
 	int bytes = 1;
@@ -256,7 +256,7 @@ static int dis_inst2(FILE *ofile, uint8_t *bfr, int addr)
 		case 13:
 				/* long address */
 			/* long addr calculation */
-			longaddr_print(op1, op2, label);
+			longaddr_print(op1, op2, label, sizeof(label) - 1);
 			fprintf(ofile, mnemonic[opcode], label);
 			break;
 		default:

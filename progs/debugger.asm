@@ -37,19 +37,19 @@
 ; manipulate the stack so that when we return from interrupt, code execution
 ; will continue at an address immediately following this code section.
 reset_vector:
-	anl	0xDC, #0xFE
-	mov	A, #0x0C
+	mov	A, #0x09
 	push	ACC
 	mov	A, #0x47
 	push	ACC
 	reti			; Return from interrupt, ending up at 0x470c
 
 ;---------------------------------------------------------------------------
-.org 0x470C
+.org 0x4709
 start:
 
 	mov	IEN, #0		; Disable interrupts
 	mov	SP, #0x80	; Reset stack pointer
+	anl	0xDC, #0xFE	; Don't know what this does
 	ljmp	main		; Enter the main() loop
 
 
@@ -71,7 +71,12 @@ sdi_jumptable:
 	ljmp	cmd1_hello
 	ljmp	cmd2_peek
 	ljmp	cmd3_poke
-
+	ljmp	cmd4_jump
+	ljmp	cmd5_nand
+	ljmp	cmd6_sfr_get
+	ljmp	cmd7_sfr_set
+	ljmp	cmd8_ext_op
+	ljmp	cmd9_error
 
 cmd0_null:
 	mov	0x21, #0
@@ -92,18 +97,17 @@ cmd2_peek:
 	mov	DPH, 0x31	; DPH start src
 	mov	DPL, 0x32	; DPL start src
 	movx	A, @DPTR
-
 	mov	0x21, A
-	inc	DPTR
 
+	;inc	DPTR
 	movx	A, @DPTR
 	mov	0x22, A
-	inc	DPTR
 
+	;inc	DPTR
 	movx	A, @DPTR
 	mov	0x23, A
-	inc	DPTR
 
+	;inc	DPTR
 	movx	A, @DPTR
 	mov	0x24, A
 
@@ -113,131 +117,76 @@ cmd3_poke:
 	mov	DPH, 0x31
 	mov	DPL, 0x32
 	movx	A, @DPTR
-	mov	B, A		; Save the old value
+	mov	0x21, A		; Save the old value
 
+	mov	DPH, 0x31
+	mov	DPL, 0x32
 	mov	A, 0x33		; Copy the new value
 	movx	@DPTR, A
 
-	mov	0x23, B
+	mov	0x22, #0
+	mov	0x23, #0
 	mov	0x24, #0
 	sjmp    transmit_and_loop
 
+cmd4_jump:
+	mov     0x21, #1
+	mov     0x22, #1
+	mov     0x23, #1
+	mov     0x24, #1
+	sjmp    transmit_and_loop
+
+cmd5_nand:
+	mov	NSRCL, 0x31
+	mov	NSRCH, 0x32
+	mov	0x21, #1
+	mov	0x22, #2
+	mov	0x23, #3
+	mov	0x24, #4
+	sjmp	transmit_and_loop
+
+cmd6_sfr_get:
+        ; This will get replaced by "mov    0x21, [SFR]" at runtime
+        .db	0xa5, 0x60, 0x61
+        mov	0x22, #0
+        mov	0x23, #0
+        mov	0x24, #0
+        sjmp	transmit_and_loop
+
+cmd7_sfr_set:
+	; This will get replaced by "mov    [SFR], 0x31" at runtime
+	.db	0xa5, 0x62, 0x63
+	inc	0x31
+	mov	0x21, 0x31
+	mov	0x22, #0
+	mov	0x23, #0
+	mov	0x24, #0
+	sjmp	transmit_and_loop
+
+cmd8_ext_op:
+	.db	0xa5, 0x64, 0x65
+	mov	0x21, #0
+	mov	0x22, #0
+	mov	0x23, #0
+	mov	0x24, #0
+	sjmp	transmit_and_loop
+
+; Send an error packet back
+cmd9_error:
+	mov	0x21, #0xa5
+	mov	0x22, #0xa5
+	mov	0x23, #0xa5
+	mov	0x24, #0xa5
+	sjmp	transmit_and_loop
 
 transmit_and_loop:
 	lcall	transmit_from_ram
 	ljmp	main
 
-;        ajmp    cmd_poke
-;not_c03:cjne    A, #0x04, not_c04
-;        ajmp    cmd_jump
-;not_c04:cjne    A, #0x05, not_c05
-;        ajmp    cmd_nand
-;not_c05:cjne    A, #0x06, not_c06
-;        ajmp    cmd_sfr_set
-;not_c06:cjne    A, #0x07, not_c07
-;        ajmp    cmd_sfr_get
-;not_c07:cjne    A, #0x08, not_c08
-;        ajmp    cmd_ext_op
-;not_c08:ajmp    cmd_error
-;
-;; Send a 'hello' packet
-;cmd_hello:
-;        mov     0x20, #0x41
-;        mov     0x21, #0x1f
-;        mov     0x22, #0x0f
-;        mov     0x23, #0x0f
-;        ajmp    xmit_response
-;
-;; Send all zeroes
-;
-;; Send an echo back
-;cmd_echo:
-;        ajmp    xmit_response
-;
-;; Peek at an area of memory
-;cmd_peek:
-;        mov     DPH, 0x20    ; DPH start src
-;        mov     DPL, 0x21    ; DPL start src
-;        movx    A, @DPTR
-;        mov     0x20, A
-;        inc     DPTR
-;
-;        movx    A, @DPTR
-;        mov     0x21, A
-;        inc     DPTR
-;
-;        movx    A, @DPTR
-;        mov     0x22, A
-;        inc     DPTR
-;
-;        movx    A, @DPTR
-;        mov     0x23, A
-;
-;        sjmp    xmit_response
-;
-;; Poke into an area of memory
-;cmd_poke:
-;        mov     DPH, 0x20
-;        mov     DPL, 0x21
-;        movx    A, @DPTR
-;        mov     B, A     ; Save the old value
-;
-;        mov     A, 0x22     ; Copy the new value
-;        movx    @DPTR, A
-;
-;        mov     0x22, B
-;        mov     0x23, #0
-;        sjmp    xmit_response
-;
-;; Jump to an address
-;cmd_jump:
-;        mov     0x20, #1
-;        mov     0x21, #1
-;        mov     0x22, #1
-;        mov     0x23, #1
-;        sjmp    xmit_response
-;
-;cmd_nand:
-;        mov     NSRCL, 0x21
-;        mov     NSRCH, 0x22
-;        mov     NCMD, 0x20
-;        mov     0x20, #1
-;        mov     0x21, #2
-;        mov     0x22, #3
-;        mov     0x23, #4
-;        sjmp    xmit_response
-;
-;cmd_sfr_get:
-;        ; This will get replaced by "mov    0x20, [SFR]" at runtime
-;        .db     0xa5, 0x60, 0x61
-;        mov     0x21, #0
-;        mov     0x22, #0
-;        mov     0x23, #0
-;        sjmp    xmit_response
-;
-;cmd_sfr_set:
-;        ; This will get replaced by "mov    [SFR], 0x20" at runtime
-;        .db     0xa5, 0x62, 0x63
-;        mov     0x21, #0
-;        mov     0x22, #0
-;        mov     0x23, #0
-;        sjmp    xmit_response
-;
-;cmd_ext_op:
-;        .db     0xa5, 0x64, 0x65
-;        mov     0x20, #0
-;        mov     0x21, #0
-;        mov     0x22, #0
-;        mov     0x23, #0
-;        sjmp    xmit_response
-;
-;; Send an error packet back
-;cmd_error:
-;        mov     0x20, #0xa5
-;        mov     0x21, #0xa5
-;        mov     0x22, #0xa5
-;        mov     0x23, #0xa5
-;        sjmp    xmit_response
+
+
+; Library routines
+.org 0x4800
 
 
 ; pause_a_while(while1, while2, while3)
@@ -262,7 +211,6 @@ top_of_pause:
 ; These functions allow you to transmit data over the SD bus, or
 ; receive data back.  All functions are blocking, and will only
 ; return when they are completely finished and the card is idle.
-
 
 ; void setup_sd_rcv(void)
 ; Prepares the SD registers to accept an SD packet.
@@ -313,8 +261,8 @@ wait_for_packet_end:
 ; INPUT:	Command at offset 0x20, data at offsets 0x21-24
 ; OUTPUT:	None
 transmit_from_ram:
-	;orl	0x20, #0x40
-	;anl	0x20, #0x7F
+	orl	0x20, #0x40
+	anl	0x20, #0x7F
 	anl	0xE8, #0xFD
 	mov	0x1f, #0x00
 	mov	SD_DATL, #0xE8
@@ -327,7 +275,6 @@ wait_for_xmit_done:
 	mov	A, 0xE8
 	jnb	ACC.1, wait_for_xmit_done
 	anl	0xE8, #0xFD
-	mov	SP, #0x80
 	ret
 
 
