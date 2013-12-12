@@ -120,7 +120,7 @@ cmd3_poke:
 
 	mov	0x23, B
 	mov	0x24, #0
-	sjmp    xmit_response
+	sjmp    transmit_and_loop
 
 
 transmit_and_loop:
@@ -313,6 +313,8 @@ wait_for_packet_end:
 ; INPUT:	Command at offset 0x20, data at offsets 0x21-24
 ; OUTPUT:	None
 transmit_from_ram:
+	;orl	0x20, #0x40
+	;anl	0x20, #0x7F
 	anl	0xE8, #0xFD
 	mov	0x1f, #0x00
 	mov	SD_DATL, #0xE8

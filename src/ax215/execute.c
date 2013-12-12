@@ -241,20 +241,22 @@ static int do_enter_debugger(struct sd_state *state)
         cmd[i] = rand();
     cmd[0] &= 0x3f;
     cmd[0] |= 0x40;
-    cmd[0] = 0x40;
+    cmd[0] = 0x41;
     cmd[5] = (crc7(cmd, 5)<<1)|1;
 
     printf("Transmitting data:\n");
     print_hex(cmd, sizeof(cmd));
     xmit_mmc_cmd(state, cmd, sizeof(cmd));
 
-    ret = rcvr_mmc_dat0_start(state, 1024);
+    ret = rcvr_mmc_cmd_start(state, 1024);
     if (-1 == ret)
         printf("No response\n");
     else {
+        uint8_t response[16];
         printf("Response after %d tries\n", ret);
-        rcvr_spi(state, response, sizeof(response));
+        //rcvr_spi(state, response, sizeof(response));
         //rcvr_mmc_dat4(state, response, sizeof(response));
+        rcvr_mmc_cmd(state, response, sizeof(response));
         printf("SD card said:\n");
         print_hex(response, sizeof(response));
     }

@@ -15,7 +15,7 @@
 #include "nand.h"
 
 #define DBG_PROMPT "AX211> "
-#define PROGRAM_OFFSET 0x7b00
+#define PROGRAM_OFFSET 0x4700
 
 struct dbg {
     int             should_quit;
@@ -44,9 +44,9 @@ enum protocol_code {
 };
 
 struct debug_command {
-    char    *name;
-    char    *desc;
-    char    *help;
+    const char    *name;
+    const char    *desc;
+    const char    *help;
     int (*func)(struct dbg *dbg, int argc, char **argv);
 };
 
@@ -205,7 +205,7 @@ static int dbg_txrx(struct dbg *dbg, enum protocol_code code,
     bfr[5] = (crc7(bfr, 5)<<1)|1;
 
     xmit_mmc_cmd(dbg->sd, bfr, sizeof(bfr));
-    tries = rcvr_mmc_cmd_start(dbg->sd, 32);
+    tries = rcvr_mmc_cmd_start(dbg->sd, 1024);
     if (tries == -1) {
         printf("Never got start!\n");
         return -1;
@@ -551,7 +551,8 @@ static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv) {
     }
 
     xram_get(dbg, ram, 0, sizeof(ram));
-    write(fd, ram, sizeof(ram));
+    if (-1 == write(fd, ram, sizeof(ram)))
+        perror("Unable to write to dumpfile");
     close(fd);
 
     return 0;
@@ -684,7 +685,7 @@ static int dbg_do_help(struct dbg *dbg, int argc, char **argv) {
 
                 if (cmd->help) {
                     printf("Help for %s:\n", cmd->name);
-                    printf(cmd->help);
+                    printf("%s", cmd->help);
                     printf("\n");
                 }
                 else {
@@ -822,6 +823,28 @@ static int find_fixups(struct dbg *dbg) {
 }
 
 
+static int validate_communication(struct dbg *dbg) {
+    uint8_t args[4] = {'H', 'E', 'L', 'O'};
+    uint8_t response[5];
+
+    printf("Checking card communication... ");
+    dbg_txrx(dbg, cmd_hello, args, response, sizeof(response));
+
+    if (response[0] != args[0]
+            || response[1] != args[1]
+            || response[2] != args[2]
+            || response[3] != args[3]) {
+        printf("Error: sent 0x%02x%02x%02x%02x, ",
+            args[0], args[1], args[2], args[3]);
+        printf("received 0x%02x%02x%02x%02x\n",
+            response[0], response[1], response[2], response[3]);
+        return -1;
+    }
+    printf("Okay\n");
+
+    return 0;
+}
+
 int dbg_main(struct sd_state *sd) {
     static struct dbg dbg;
 
@@ -839,6 +862,9 @@ int dbg_main(struct sd_state *sd) {
     dbg.sd = sd;
     dbg.should_quit = 0;
     dbg.ret = 0;
+
+    if (validate_communication(&dbg) < 0)
+        return -EAGAIN;
 
     if (find_fixups(&dbg))
         return -EAGAIN;

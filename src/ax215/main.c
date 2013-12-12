@@ -119,7 +119,7 @@ static int read_file(char *filename, uint8_t *bfr, int size) {
 
 static int load_and_enter_debugger(struct sd_state *state, char *filename) {
     uint8_t response[8];
-    uint8_t file[512];
+    uint8_t file[512+(4*sizeof(uint16_t))];
     memset(file, 0xff, sizeof(file));
 
     // Load in the debugger stub
@@ -140,23 +140,17 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         if (-1 == ret)
             return 1;
 
+        sd_mmc_dat4_crc16(file, file+(sizeof(file)-8), sizeof(file)-8);
         xmit_mmc_dat4(state, file, sizeof(file));
-        sd_toggle_clk(state, 8);
-        //rcvr_mmc_cmd(state, response, 1);
-        //printf("Immediate code-load response: %02x\n", response[0]);
 
-        for (tries=0; tries<2; tries++) {
-            if (-1 != rcvr_mmc_cmd_start(state, 50))
-                break;
-            usleep(50000);
-        }
-        // Couldn't enter debugger, try again
-        if (-1 == rcvr_mmc_cmd_start(state, 32)) {
-            printf("Never got start-of-data command from debugger\n");
+        /* Wait for the debugger to initialize */
+        ret = rcvr_mmc_dat0_start(state, 100);
+        if (-1 == ret) {
+            printf("DAT0 never started\n");
             continue;
         }
-
-        rcvr_mmc_cmd(state, response, sizeof(response));
+        printf("Entered factory mode after %d tries\n", ret);
+        rcvr_spi(state, response, 1);
 
         break;
     }
@@ -296,9 +290,9 @@ int main(int argc, char **argv) {
     }
 
     if (!have_seed)
-	    seed = rand();
+        seed = rand();
     if (!have_loop)
-	    loop = 0;
+        loop = 0;
 
     if (mode == mode_help)
         ret = print_help(argv[0]);
