@@ -1,34 +1,27 @@
 .equ	IEN, 0xA8
 
-.equ	SFR_80, 0x80
-.equ	SD_DATL, 0xD6
-.equ	SD_DATH, 0xD7
+.equ	SD_DATL, 0xD6		; "Low" byte of SD transmission
+.equ	SD_DATH, 0xD7		; "High" byte of SD transmission
 
-.equ	SD_BYTES, 0xDE  ; SD byte count
+.equ	SD_BYTESL, 0xDE		; SD transmission byte count
+.equ	SD_BYTESH, 0xDF		; SD transmission byte count
 
-.equ	SDDIR, 0xEB
-.equ	SDSM, 0x90
+.equ	SD_XMIT, 0xE7		; Write here to start an SD transmission
+.equ	SD_XMIT_STATE, 0xE8	; State machine from active SD transmission
 
-.equ	SDCMD, 0xE6
-.equ	SD_XMIT, 0xE7
-.equ	SD_XMIT_STATE, 0xE8
-.equ	SDI1, 0xE9
-.equ	SDI2, 0xEA
-.equ	SDI3, 0xEB
-.equ	SDI4, 0xEC
 
-.equ	RESET, 0
-.equ	PORT1, 0xF6
+.equ	SD_RCVSTATE, 0xDC	; Seems to be related to SD receive commands
+.equ	SDCMD, 0xE6		; A copy of the incoming SD command
+.equ	SDI1, 0xE9		; A copy of the incoming SD argument 1
+.equ	SDI2, 0xEA		; A copy of the incoming SD argument 2
+.equ	SDI3, 0xEB		; A copy of the incoming SD argument 3
+.equ	SDI4, 0xEC		; A copy of the incoming SD argument 4
 
-.equ	NPS, 0x9e
+; RAM map:
+; 0x20 - 0x24: Outgoing SD transmission bytes
+; 0x30 - 0x34: Incoming SD transmission bytes
+; 0x35 - 0x39: ISR trigger count
 
-.equ	LED_STATE, 0x40
-
-.equ	NCMD, 0xa1
-.equ	NSRCL, 0xa2
-.equ	NSRCH, 0xa3
-
-.equ	SD_WAITING, 0x24
 
 .org 0x4700
 ; This gets called from the ROM.
@@ -49,7 +42,7 @@ start:
 
 	mov	IEN, #0		; Disable interrupts
 	mov	SP, #0x80	; Reset stack pointer
-	anl	0xDC, #0xFE	; Don't know what this does
+	anl	SD_RCVSTATE, #0xFE	; Don't know what this does
 	ljmp	main		; Enter the main() loop
 
 
@@ -59,6 +52,11 @@ main:
 
 	mov	0x20, 0x30		; Put the incoming CMD in the outgoing
 					; buffer, so it's part of the response.
+
+        mov	0x21, #0		; Pre-clear these values, as they will
+        mov	0x22, #0		; most commonly be zero in the response.
+        mov	0x23, #0		; This saves many bytes later on.
+        mov	0x24, #0
 
 	mov	A, 0x30			; Grab the command that was received
 	add	A, 0x30			; and multiply it by three, as ljmp
@@ -77,12 +75,9 @@ sdi_jumptable:
 	ljmp	cmd7_sfr_set
 	ljmp	cmd8_ext_op
 	ljmp	cmd9_error
+	ljmp	cmd10_irq
 
 cmd0_null:
-	mov	0x21, #0
-	mov	0x22, #0
-	mov	0x23, #0
-	mov	0x24, #0
 	ljmp	transmit_and_loop
 
 cmd1_hello:
@@ -111,7 +106,7 @@ cmd2_peek:
 	movx	A, @DPTR
 	mov	0x24, A
 
-	sjmp	transmit_and_loop
+	ljmp	transmit_and_loop
 
 cmd3_poke:
 	mov	DPH, 0x31
@@ -124,21 +119,16 @@ cmd3_poke:
 	mov	A, 0x33		; Copy the new value
 	movx	@DPTR, A
 
-	mov	0x22, #0
-	mov	0x23, #0
-	mov	0x24, #0
 	sjmp    transmit_and_loop
 
 cmd4_jump:
-	mov     0x21, #1
-	mov     0x22, #1
-	mov     0x23, #1
-	mov     0x24, #1
+	mov	DPH, 0x31
+	mov	DPL, 0x32
+	clr	A
+	jmp	@A+DPTR
 	sjmp    transmit_and_loop
 
 cmd5_nand:
-	mov	NSRCL, 0x31
-	mov	NSRCH, 0x32
 	mov	0x21, #1
 	mov	0x22, #2
 	mov	0x23, #3
@@ -148,9 +138,6 @@ cmd5_nand:
 cmd6_sfr_get:
         ; This will get replaced by "mov    0x21, [SFR]" at runtime
         .db	0xa5, 0x60, 0x61
-        mov	0x22, #0
-        mov	0x23, #0
-        mov	0x24, #0
         sjmp	transmit_and_loop
 
 cmd7_sfr_set:
@@ -158,26 +145,25 @@ cmd7_sfr_set:
 	.db	0xa5, 0x62, 0x63
 	inc	0x31
 	mov	0x21, 0x31
-	mov	0x22, #0
-	mov	0x23, #0
-	mov	0x24, #0
 	sjmp	transmit_and_loop
 
 cmd8_ext_op:
-	.db	0xa5, 0x64, 0x65
-	mov	0x21, #0
-	mov	0x22, #0
-	mov	0x23, #0
-	mov	0x24, #0
+	.db	0xa5, 0x64, 0x65, 0x66, 0x67
 	sjmp	transmit_and_loop
 
 ; Send an error packet back
 cmd9_error:
 	mov	0x21, #0xa5
-	mov	0x22, #0xa5
-	mov	0x23, #0xa5
-	mov	0x24, #0xa5
 	sjmp	transmit_and_loop
+
+cmd10_irq:
+	mov	0x21, IE	; Save old interrupt enable state
+	mov	A, 0x31
+	jz	dont_update_irqs
+	mov	IE, 0x32
+dont_update_irqs:
+	sjmp	transmit_and_loop
+
 
 transmit_and_loop:
 	lcall	transmit_from_ram
@@ -198,8 +184,8 @@ transmit_and_loop:
 ; will be decremented.  This will conitnue until all values are zero.
 pause_a_while:
 	mov	R5, #0x00
-	mov	R6, #0x20
-	mov	R7, #0x01
+	mov	R6, #0xf0
+	mov	R7, #0x05
 top_of_pause:
 	djnz	R5, top_of_pause
 	djnz	R6, top_of_pause
@@ -218,14 +204,14 @@ top_of_pause:
 ; OUTPUT:	None
 setup_sd_rcv:
 	clr	0xA0.2
-	anl	0xE8, #0xF0
-	orl	0xDC, #4
-	orl	0xDC, #8
+	anl	SD_XMIT_STATE, #0xF0
+	orl	SD_RCVSTATE, #4
+	orl	SD_RCVSTATE, #8
 	ret
 
 ; void receive_one_packet(void)
 ; Received a single four-byte-plus-command packet, and stores it in RAM,
-; at offsets 0x30 - 0x35.
+; at offsets 0x30 - 0x34.
 ; RAM offset 0x30 contains the SD command, while offsets 0x31-0x34 contain
 ; the data bytes.
 ; Returns only once the bytes have been received.
@@ -237,9 +223,9 @@ receive_one_packet:
 	acall	setup_sd_rcv
 wait_for_packet_start:
 	mov	R5, #0
-	mov	A, 0xE8
+	mov	A, SD_XMIT_STATE
 	jnb	ACC.0, wait_for_packet_start
-	anl	0xE8, #0xFE
+	anl	SD_XMIT_STATE, #0xFE
 	orl	0xE3, #1
 wait_for_packet_end:
 	jnb	0x90.4, wait_for_packet_end
@@ -261,20 +247,20 @@ wait_for_packet_end:
 ; INPUT:	Command at offset 0x20, data at offsets 0x21-24
 ; OUTPUT:	None
 transmit_from_ram:
-	orl	0x20, #0x40
-	anl	0x20, #0x7F
-	anl	0xE8, #0xFD
+	orl	0x20, #0x40		; Make sure the outgoing command packet
+	anl	0x20, #0x7F		; has its sync and start bits set.
+	anl	SD_XMIT_STATE, #0xFD
 	mov	0x1f, #0x00
 	mov	SD_DATL, #0xE8
 	mov	SD_DATH, #0x12
-	mov	0xDE, #0x04
-	mov	0xDF, #0
-	mov	0xE7, #0xf1
+	mov	SD_BYTESL, #0x04
+	mov	SD_BYTESH, #0
+	mov	SD_XMIT, #0xf1
 
 wait_for_xmit_done:
-	mov	A, 0xE8
+	mov	A, SD_XMIT_STATE
 	jnb	ACC.1, wait_for_xmit_done
-	anl	0xE8, #0xFD
+	anl	SD_XMIT_STATE, #0xFD
 	ret
 
 

@@ -229,13 +229,10 @@ bail:
 
 static int do_enter_debugger(struct sd_state *state)
 {
-    uint8_t response[5];
     uint8_t cmdsize = 6;
     uint8_t cmd[cmdsize];
     int i;
     int ret = 0;
-
-    memset(response, 0, sizeof(response));
 
     for (i=0; i<cmdsize; i++)
         cmd[i] = rand();

@@ -281,6 +281,18 @@ void xmit_mmc_dat4 (
     gpio_set_direction(state->dat1, GPIO_IN);
     gpio_set_direction(state->dat2, GPIO_IN);
     gpio_set_direction(state->dat3, GPIO_IN);
+    /*
+    uint8_t dat_levels = rand();
+    printf("Setting DAT levels: %d  %d  %d  %d\n",
+		    dat_levels&1,
+		    dat_levels&2,
+		    dat_levels&4,
+		    dat_levels&8);
+    gpio_set_value(state->dat0, dat_levels&1);
+    gpio_set_value(state->dat1, dat_levels&2);
+    gpio_set_value(state->dat2, dat_levels&4);
+    gpio_set_value(state->dat3, dat_levels&8);
+    */
 }
 
 

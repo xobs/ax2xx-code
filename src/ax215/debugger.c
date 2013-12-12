@@ -12,7 +12,6 @@
 #include <readline/history.h>
 #include "sd.h"
 #include "crc-16.h"
-#include "nand.h"
 
 #define DBG_PROMPT "AX215> "
 #define PROGRAM_OFFSET 0x4700
@@ -21,13 +20,13 @@ struct dbg {
     int             should_quit;
     int             ret;
     struct sd_state *sd;
-    struct nand     *nand;
 
     int             read_sfr_offset;
     int             write_sfr_offset;
     int             ext_op_offset;
 
     int             initialized; // False if uninitialized
+    int             fixed_up; // True if fixups have been found
 };
 
 /* These are SD commands as they get sent to the card */
@@ -41,6 +40,8 @@ enum protocol_code {
     cmd_sfr_get = 6,
     cmd_sfr_set = 7,
     cmd_ext_op  = 8,
+    cmd_error = 9,
+    cmd_irq = 10,
 };
 
 struct debug_command {
@@ -64,6 +65,7 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_reset(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_dump_rom(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_irq(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv);
 
 static struct debug_command debug_commands[] = {
@@ -151,11 +153,6 @@ static struct debug_command debug_commands[] = {
         .func = dbg_do_nand,
         .desc = "Operate on the NAND in some fashion",
         .help = "Usage: nand [-r] [-l] [-s] [-d] [-v] [-c] [-t cmd:addr] -w [src:addr]\n"
-                "   -r            Reset NAND logging\n"
-                "   -l            Begin NAND logging\n"
-                "   -s            Stop NAND logging\n"
-                "   -d            Dump NAND events\n"
-                "   -v            Print NAND status\n"
                 "   -c [reg]      Try every possible value in register [reg]\n"
                 "   -w [src:dst]  Write RAM at address [src] to NAND addr [addr]\n"
                 "   -t [type]     Test NAND command.  Specify an address on the cmdline\n"
@@ -168,6 +165,16 @@ static struct debug_command debug_commands[] = {
         .help = "Usage: extop [opcode]    or   extop [op1] [op2]\n"
                 "   Extended opcodes are one or two bytes.  Two-byte opcodes \n"
                 "   have the upper nybble of op1 set as 0xf0, e.g. 0xf5 0x61\n"
+                ,
+    },
+    {
+        .name = "irq",
+        .func = dbg_do_irq,
+        .desc = "Manipulate IRQs on the AX215\n",
+        .help = "Usage: irq [-r] [-m mask] [-p]\n"
+                "   -r      Reset IRQ statistics\n"
+                "   -p      Print IRQ statistics\n"
+                "   -m=mask Set IRQ enable mask\n"
                 ,
     },
     {
@@ -211,6 +218,10 @@ static int dbg_txrx(struct dbg *dbg, enum protocol_code code,
         return -1;
     }
     rcvr_mmc_cmd(dbg->sd, out, outsize);
+
+    if ((out[0] & 0x3f) != code && dbg->fixed_up)
+        printf("Warning: Command stream seems to have changed "
+                "(expected 0x%02x, got 0x%02x)\n", code, out[0] & 0x3f);
     return 0;
 }
 
@@ -261,31 +272,33 @@ static int xram_get(struct dbg *dbg, uint8_t *buf,
     return 0;
 }
 
-
-
-
-static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
-    uint8_t op1;
-    uint8_t op2;
+static int ram_get(struct dbg *dbg, int offset) {
     uint8_t cmd[4];
     uint8_t bfr[5];
+    xram_set(dbg, dbg->read_sfr_offset, offset);
+    memset(cmd, 0, sizeof(cmd));
+    dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+    return bfr[1];
+}
+
+static int dbg_do_ext_op(struct dbg *dbg, int argc, char **argv) {
+    uint8_t cmd[4];
+    uint8_t bfr[5];
+    int i;
     int ret;
 
     if (argc < 2) {
-        printf("Usage: %s op1 [op2]\n", argv[0]);
+        printf("Usage: %s op1 [op2 [op3 [op4]]]\n", argv[0]);
         return -EINVAL;
     }
 
-    op1 = strtoul(argv[1], NULL, 0);
-    op2 = 0x00; // nop opcode
-    if (argc > 2) {
-        op2 = strtoul(argv[2], NULL, 0);
-        op1 |= 0xf0;
+    xram_set(dbg, dbg->ext_op_offset + 0, 0xa5);
+    for (i = 1; i <= 4; i++) {
+        if (argc > i)
+            xram_set(dbg, dbg->ext_op_offset + i, strtoul(argv[i], NULL, 0));
+        else
+            xram_set(dbg, dbg->ext_op_offset + i, 0);
     }
-
-    xram_set(dbg, dbg->ext_op_offset, 0xa5);
-    xram_set(dbg, dbg->ext_op_offset + 1, op1);
-    xram_set(dbg, dbg->ext_op_offset + 2, op2);
 
     memset(cmd, 0, sizeof(cmd));
     ret = dbg_txrx(dbg, cmd_ext_op, cmd, bfr, sizeof(bfr));
@@ -304,89 +317,189 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
 
     while ((ch = getopt(argc, argv, "dw:r:x:")) != -1) {
         switch(ch) {
-            case 'd':
-                for (sfr = 0; sfr <= 127; sfr++) {
-                    uint8_t cmd[4];
-                    uint8_t bfr[5];
-                    xram_set(dbg, dbg->read_sfr_offset, sfr + offset);
-                    memset(cmd, 0, sizeof(cmd));
+        case 'd':
+            for (sfr = 0; sfr <= 127; sfr++) {
+                uint8_t cmd[4];
+                uint8_t bfr[5];
+                xram_set(dbg, dbg->read_sfr_offset, sfr + offset);
+                memset(cmd, 0, sizeof(cmd));
+                dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                sfr_table[sfr] = bfr[1];
+            }
+            print_hex_offset(sfr_table, sizeof(sfr_table), offset);
+            break;
+
+        case 'w': {
+                char *endptr;
+                int sfr = strtoul(optarg, &endptr, 0);
+                int val;
+                if (offset && (sfr < 0x80 || sfr > 0xff)) {
+                    printf("Invalid SFR.  "
+                            "SFR addresses go between 0x80 and 0xff\n");
+                    return -EINVAL;
+                }
+                if (!offset && (sfr < 0x00 || sfr > 0x7f)) {
+                    printf("Invalid RAM address.  "
+                            "RAM addresses go between 0x00 and 0x7f\n");
+                    return -EINVAL;
+                }
+                if (!endptr) {
+                    printf("No value specified\n");
+                    return -EINVAL;
+                }
+                val = strtoul(endptr + 1, NULL, 0);
+
+                printf("Setting %s_%02x -> %02x\n",
+                        offset?"SFR":"RAM", sfr, val);
+
+                ram_set(dbg, sfr, val);
+            }
+            break;
+
+        case 'x':
+        case 'r': {
+                uint8_t cmd[4];
+                uint8_t bfr[5];
+                sfr = strtoul(optarg, NULL, 0);
+                if (offset && (sfr < 0x80 || sfr > 0xff)) {
+                    printf("Invalid SFR.  "
+                            "SFR addresses go between 0x80 and 0xff\n");
+                    return -EINVAL;
+                }
+                if (!offset && (sfr < 0x00 || sfr > 0x7f)) {
+                    printf("Invalid RAM address.  "
+                            "RAM addresses go between 0x00 and 0x7f\n");
+                    return -EINVAL;
+                }
+                xram_set(dbg, dbg->read_sfr_offset, sfr);
+                memset(cmd, 0, sizeof(cmd));
+                dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                if (ch == 'r') {
+                    printf("%s_%02X: %02x\n",
+                            offset?"SFR":"RAM", sfr, bfr[1]);
+                }
+                else if (ch == 'x') {
+                    uint8_t num[4];
+
+                    num[0] = bfr[1];
+
+                    xram_set(dbg, dbg->read_sfr_offset, sfr+1);
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                    sfr_table[sfr] = bfr[1];
-                }
-                print_hex_offset(sfr_table, sizeof(sfr_table), offset);
-                break;
+                    num[1] = bfr[2];
 
-            case 'w': {
-                    char *endptr;
-                    int sfr = strtoul(optarg, &endptr, 0);
-                    int val;
-                    if (offset && (sfr<0x80 || sfr>0xff)) {
-                        printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
-                        return -EINVAL;
-                    }
-                    if (!offset && (sfr<0x00 || sfr>0x7f)) {
-                        printf("Invalid RAM address.  RAM values go between 0x00 and 0x7f\n");
-                        return -EINVAL;
-                    }
-                    if (!endptr) {
-                        printf("No value specified\n");
-                        return -EINVAL;
-                    }
-                    val = strtoul(endptr+1, NULL, 0);
-
-                    printf("Setting %s_%02x -> %02x\n", offset?"SFR":"RAM", sfr, val);
-
-                    ram_set(dbg, sfr, val);
-                }
-                break;
-
-            case 'x':
-            case 'r': {
-                    uint8_t cmd[4];
-                    uint8_t bfr[5];
-                    sfr = strtoul(optarg, NULL, 0);
-                    if (offset && (sfr<0x80 || sfr>0xff)) {
-                        printf("Invalid SFR.  SFR values go between 0x80 and 0xff\n");
-                        return -EINVAL;
-                    }
-                    if (!offset && (sfr<0x00 || sfr>0x7f)) {
-                        printf("Invalid RAM address.  RAM values go between 0x00 and 0x7f\n");
-                        return -EINVAL;
-                    }
-                    xram_set(dbg, dbg->read_sfr_offset, sfr);
-                    memset(cmd, 0, sizeof(cmd));
+                    xram_set(dbg, dbg->read_sfr_offset, sfr+2);
                     dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                    if (ch == 'r') {
-                        printf("%s_%02X: %02x\n", offset?"SFR":"RAM", sfr, bfr[0]);
-                    }
-                    else if (ch == 'x') {
-                        uint8_t num[4];
+                    num[2] = bfr[3];
 
-                        num[0] = bfr[1];
+                    xram_set(dbg, dbg->read_sfr_offset, sfr+3);
+                    dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
+                    num[3] = bfr[4];
 
-                        xram_set(dbg, dbg->read_sfr_offset, sfr+1);
-                        dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[1] = bfr[2];
-
-                        xram_set(dbg, dbg->read_sfr_offset, sfr+2);
-                        dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[2] = bfr[3];
-
-                        xram_set(dbg, dbg->read_sfr_offset, sfr+3);
-                        dbg_txrx(dbg, cmd_sfr_get, cmd, bfr, sizeof(bfr));
-                        num[3] = bfr[4];
-
-                        printf("%s_%02X: %02x%02x%02x%02x\n", offset?"SFR":"RAM",
-                                sfr, num[3], num[2], num[1], num[0]);
-                    }
+                    printf("%s_%02X: %02x%02x%02x%02x\n", offset?"SFR":"RAM",
+                            sfr, num[3], num[2], num[1], num[0]);
                 }
-                break;
+            }
+            break;
 
-            default:
-                printf("Usage: %s [-d] [-w offset:val] [-r offset]\n", argv[0]);
-                return -EINVAL;
+        default:
+            printf("Usage: %s [-d] [-w offset:val] [-r offset]\n", argv[0]);
+            return -EINVAL;
         }
     }
+    return 0;
+}
+
+static int irq_print_statistics(struct dbg *dbg) {
+    uint8_t *ptr;
+    uint32_t counter;
+
+    ptr = (uint8_t *)&counter;
+
+    printf("IRQ Statistics:\n");
+
+    printf("\tirq 0: %d\n", ram_get(dbg, 0x35));
+
+    ptr[0] = ram_get(dbg, 0xc0);
+    ptr[1] = ram_get(dbg, 0xc1);
+    ptr[2] = ram_get(dbg, 0xc2);
+    ptr[3] = ram_get(dbg, 0xc3);
+    printf("\tirq 1: %d\n", counter);
+
+    ptr[0] = ram_get(dbg, 0xc8);
+    ptr[1] = ram_get(dbg, 0xc9);
+    ptr[2] = ram_get(dbg, 0xca);
+    ptr[3] = ram_get(dbg, 0xcb);
+    printf("\tirq 2: %d\n", counter);
+
+    ptr[0] = ram_get(dbg, 0xd8);
+    ptr[1] = ram_get(dbg, 0xd9);
+    ptr[2] = ram_get(dbg, 0xda);
+    ptr[3] = ram_get(dbg, 0xdb);
+    printf("\tirq 3: %d\n", counter);
+
+    ptr[0] = ram_get(dbg, 0xf8);
+    ptr[1] = ram_get(dbg, 0xf9);
+    ptr[2] = ram_get(dbg, 0xfa);
+    ptr[3] = ram_get(dbg, 0xfb);
+    printf("\tirq 4: %d\n", counter);
+    return 0;
+}
+
+static int dbg_do_irq(struct dbg *dbg, int argc, char **argv) {
+    int ch;
+    int handled = 0;
+
+    while ((ch = getopt(argc, argv, "rpm:")) != -1) {
+        handled = 1;
+        switch(ch) {
+        case 'm': {
+                uint8_t cmd[4];
+                uint8_t bfr[5];
+                cmd[0] = 1; /* Set mask command */
+                cmd[1] = strtoul(optarg, NULL, 0);
+                dbg_txrx(dbg, cmd_irq, cmd, bfr, sizeof(bfr));
+                printf("Previous IRQ mask: 0x%02x\n", bfr[1]);
+            }
+            break;
+
+        case 'p':
+            irq_print_statistics(dbg);
+            break;
+
+        case 'r':
+            ram_set(dbg, 0x35, 0);
+
+            ram_set(dbg, 0xc0, 0);
+            ram_set(dbg, 0xc1, 0);
+            ram_set(dbg, 0xc2, 0);
+            ram_set(dbg, 0xc3, 0);
+
+            ram_set(dbg, 0xc8, 0);
+            ram_set(dbg, 0xc9, 0);
+            ram_set(dbg, 0xca, 0);
+            ram_set(dbg, 0xcb, 0);
+
+            ram_set(dbg, 0xd8, 0);
+            ram_set(dbg, 0xd9, 0);
+            ram_set(dbg, 0xda, 0);
+            ram_set(dbg, 0xdb, 0);
+
+            ram_set(dbg, 0xf8, 0);
+            ram_set(dbg, 0xf9, 0);
+            ram_set(dbg, 0xfa, 0);
+            ram_set(dbg, 0xfb, 0);
+            printf("IRQ statistics reset\n");
+            break;
+
+        default:
+            printf("Usage: %s [-p] [-r] [-m mask]\n", argv[0]);
+            return -EINVAL;
+        }
+    }
+
+    if (!handled)
+        irq_print_statistics(dbg);
+
     return 0;
 }
 
@@ -397,107 +510,69 @@ static int dbg_do_nand(struct dbg *dbg, int argc, char **argv) {
     int ret = 0;
     while ((ch = getopt(argc, argv, "rlsdt:vc:w:")) != -1) {
         switch(ch) {
-            case 'r':
-                nand_log_reset(dbg->nand);
-                break;
+        case 'w': {
+            uint32_t src; // Source address in the AX215
+            uint8_t ram_buffer[512+3];
+            int ram_bytes = sizeof(ram_buffer)-3;
+            uint16_t crc;
+            char *next;
 
-            case 'l':
-                nand_log_enable(dbg->nand);
-                break;
+            src = strtoul(optarg, &next, 0);
 
-            case 's':
-                nand_log_disable(dbg->nand);
-                break;
+            xram_get(dbg, ram_buffer, src, ram_bytes);
+            crc = crc16(ram_buffer, ram_bytes);
+            crc = htons(crc);
+            memcpy(&ram_buffer[ram_bytes], &crc, sizeof(crc));
+            ram_buffer[ram_bytes+2] = 0x0e;
 
-            case 'd':
-                nand_log_dump(dbg->nand);
-                break;
+            xram_set(dbg, src+ram_bytes+0, ram_buffer[ram_bytes+0]);
+            xram_set(dbg, src+ram_bytes+1, ram_buffer[ram_bytes+1]);
+            xram_set(dbg, src+ram_bytes+2, ram_buffer[ram_bytes+2]);
 
-            case 'w': {
-                    uint32_t src; // Source address in the AX215
-//                    uint32_t dst; // Destination address in NAND
-                    uint8_t ram_buffer[512+3];
-                    int ram_bytes = sizeof(ram_buffer)-3;
-                    uint16_t crc;
-                    char *next;
+            cmd[0] = 5;
+            cmd[1] = ((src/8)>>0)&0xff;
+            cmd[2] = ((src/8)>>8)&0xff;
+            ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+            }
+            break;
 
-                    src = strtoul(optarg, &next, 0);
-//                    dst = 0;
-//                    if (next)
-//                        dst = strtoul(next+1, NULL, 0);
+        case 'r': {
+            }
+            break;
 
-                    xram_get(dbg, ram_buffer, src, ram_bytes);
-                    crc = crc16(ram_buffer, ram_bytes);
-                    crc = htons(crc);
-                    memcpy(&ram_buffer[ram_bytes], &crc, sizeof(crc));
-                    ram_buffer[ram_bytes+2] = 0x0e;
+        case 'c': {
+                uint32_t addr = 0x1000;
+                int i;
+                int sfr = strtoul(optarg, NULL, 0);
+                for (i = 255; i >= 0; i--) {
 
-                    xram_set(dbg, src+ram_bytes+0, ram_buffer[ram_bytes+0]);
-                    xram_set(dbg, src+ram_bytes+1, ram_buffer[ram_bytes+1]);
-                    xram_set(dbg, src+ram_bytes+2, ram_buffer[ram_bytes+2]);
+                    ram_set(dbg, sfr, i);
 
-                    cmd[0] = 5;
-                    cmd[1] = ((src/8)>>0)&0xff;
-                    cmd[2] = ((src/8)>>8)&0xff;
-                    nand_log_reset(dbg->nand);
-                    nand_log_enable(dbg->nand);
-                    ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
-                    nand_log_dump(dbg->nand);
-                }
-                break;
-
-            case 'c': {
-                    uint32_t addr = 0x1000;
-                    int i;
-                    int sfr = strtoul(optarg, NULL, 0);
-                    for (i=255; i>=0; i--) {
-
-                        ram_set(dbg, sfr, i);
-
-                        memset(cmd, 0, sizeof(cmd));
-                        cmd[0] = 0xaf;
-                        cmd[1] = ((addr/8)>>0)&0xff;
-                        cmd[2] = ((addr/8)>>8)&0xff;
-                        nand_log_reset(dbg->nand);
-                        nand_log_enable(dbg->nand);
-                        ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
-                        printf("NCMD 0x%02x: ", i);
-                        nand_log_summarize(dbg->nand);
-                    }
-                }
-                break;
-
-            case 't': {
-                    uint32_t addr = 0;
-                    char *addr_str;
                     memset(cmd, 0, sizeof(cmd));
-                    cmd[0] = strtoul(optarg, &addr_str, 0);
-                    if (addr_str)
-                        addr = strtoul(addr_str+1, NULL, 0)/8;
-                    cmd[1] = (addr>>0)&0xff;
-                    cmd[2] = (addr>>8)&0xff;
-                    nand_log_reset(dbg->nand);
-                    nand_log_enable(dbg->nand);
+                    cmd[0] = 0xaf;
+                    cmd[1] = ((addr/8)>>0)&0xff;
+                    cmd[2] = ((addr/8)>>8)&0xff;
                     ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
-                    nand_log_dump(dbg->nand);
+                    printf("NCMD 0x%02x: ", i);
                 }
-                break;
-                
+            }
+            break;
 
-            case 'v': {
-                struct timespec ts;
-                nand_log_gettime(dbg->nand, &ts);
-                printf("FPGA time: %ld.%09ld\n", ts.tv_sec, ts.tv_nsec);
-                printf("%d records sitting in log buffer\n", nand_log_count(dbg->nand));
-                printf("Log %s full\n", nand_log_is_full(dbg->nand)?"is":"is not");
-                printf("Log status is: %x\n", nand_log_status(dbg->nand));
-                printf("Max data depth: %d\n", nand_log_max_data_depth(dbg->nand));
-                printf("Max command depth: %d\n", nand_log_max_cmd_depth(dbg->nand));
-                }
-                break;
-
-            default:
-                break;
+        case 't': {
+                uint32_t addr = 0;
+                char *addr_str;
+                memset(cmd, 0, sizeof(cmd));
+                cmd[0] = strtoul(optarg, &addr_str, 0);
+                if (addr_str)
+                    addr = strtoul(addr_str+1, NULL, 0)/8;
+                cmd[1] = (addr>>0)&0xff;
+                cmd[2] = (addr>>8)&0xff;
+                ret = dbg_txrx(dbg, cmd_nand, cmd, bfr, sizeof(bfr));
+            }
+            break;
+            
+        default:
+            break;
         }
     }
     return ret;
@@ -570,11 +645,7 @@ static int dbg_do_peek(struct dbg *dbg, int argc, char **argv) {
     src = strtoul(argv[1], NULL, 0);
     cnt = strtoul(argv[2], NULL, 0);
 
-    if (src > 16384) {
-        printf("AX215 only has 16384 bytes of RAM\n");
-        return -ERANGE;
-    }
-    if ((src+cnt) > 16384) {
+    if ((src+cnt) > 65536) {
         printf("Attempt to read past end of RAM\n");
         return -ERANGE;
     }
@@ -846,13 +917,59 @@ static int validate_communication(struct dbg *dbg) {
     return 0;
 }
 
+static int install_isrs(struct dbg *dbg) {
+    printf("Installing interrupt service routines... ");
+    xram_set(dbg, 0x00, 0x05);  // INC [iram_addr]
+    xram_set(dbg, 0x01, 0x35);  // iram_addr = 0x35
+    xram_set(dbg, 0x02, 0x32);  // RETI
+    ram_set(dbg, 0x35, 0);      // Reset count
+    printf("RESET ");
+
+    xram_set(dbg, 0x03, 0xa5);  // ext_op
+    xram_set(dbg, 0x04, 0x12);  // INC32 ER0
+    xram_set(dbg, 0x05, 0x32);  // RETI
+    ram_set(dbg, 0xc0, 0);      // Reset count
+    ram_set(dbg, 0xc1, 0);      // Reset count
+    ram_set(dbg, 0xc2, 0);      // Reset count
+    ram_set(dbg, 0xc3, 0);      // Reset count
+    printf("SDI ");
+
+    xram_set(dbg, 0x0b, 0xa5);  // ext_op
+    xram_set(dbg, 0x0c, 0x16);  // INC32 ER1
+    xram_set(dbg, 0x0d, 0x32);  // RETI
+    ram_set(dbg, 0xc8, 0);      // Reset count
+    ram_set(dbg, 0xc9, 0);      // Reset count
+    ram_set(dbg, 0xca, 0);      // Reset count
+    ram_set(dbg, 0xcb, 0);      // Reset count
+    printf("SDIX ");
+
+    xram_set(dbg, 0x13, 0xa5);  // ext_op
+    xram_set(dbg, 0x14, 0x1a);  // INC32 ER2
+    xram_set(dbg, 0x15, 0x32);  // RETI
+    ram_set(dbg, 0xd8, 0);      // Reset count
+    ram_set(dbg, 0xd9, 0);      // Reset count
+    ram_set(dbg, 0xda, 0);      // Reset count
+    ram_set(dbg, 0xdb, 0);      // Reset count
+    printf("NAND ");
+
+    xram_set(dbg, 0x1b, 0xa5);  // ext_op
+    xram_set(dbg, 0x1c, 0x1e);  // INC32 ER3
+    xram_set(dbg, 0x1d, 0x32);  // RETI
+    ram_set(dbg, 0xf8, 0);      // Reset count
+    ram_set(dbg, 0xf9, 0);      // Reset count
+    ram_set(dbg, 0xfa, 0);      // Reset count
+    ram_set(dbg, 0xfb, 0);      // Reset count
+    printf("UNK ");
+
+    printf("Okay\n");
+    return 0;
+}
+
 int dbg_main(struct sd_state *sd) {
     static struct dbg dbg;
 
     if (!dbg.initialized) {
         memset(&dbg, 0, sizeof(dbg));
-
-        dbg.nand = nand_init();
 
         rl_attempted_completion_function = cmd_completion;
         rl_bind_key('\t', rl_complete);
@@ -863,12 +980,18 @@ int dbg_main(struct sd_state *sd) {
     dbg.sd = sd;
     dbg.should_quit = 0;
     dbg.ret = 0;
+    dbg.fixed_up = 0;
 
     if (validate_communication(&dbg) < 0)
         return -EAGAIN;
 
     if (find_fixups(&dbg))
         return -EAGAIN;
+
+    if (install_isrs(&dbg))
+        return -EAGAIN;
+
+    dbg.fixed_up = 1;
 
     while (!dbg.should_quit) {
         char *cmd = readline(DBG_PROMPT);
