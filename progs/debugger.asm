@@ -10,7 +10,6 @@
 .equ	SD_XMIT_STATE, 0xE8	; State machine from active SD transmission
 
 
-.equ	SD_RCVSTATE, 0xDC	; Seems to be related to SD receive commands
 .equ	SDCMD, 0xE6		; A copy of the incoming SD command
 .equ	SDI1, 0xE9		; A copy of the incoming SD argument 1
 .equ	SDI2, 0xEA		; A copy of the incoming SD argument 2
@@ -30,7 +29,6 @@
 ; manipulate the stack so that when we return from interrupt, code execution
 ; will continue at an address immediately following this code section.
 reset_vector:
-	anl	SD_RCVSTATE, #0xFE	; Don't know what this does
 	mov	A, #0x0C
 	push	ACC
 	mov	A, #0x47
@@ -205,9 +203,6 @@ top_of_pause:
 setup_sd_rcv:
 	clr	0xA0.2
 	anl	SD_XMIT_STATE, #0xF0
-	orl	SD_RCVSTATE, #4
-	orl	SD_RCVSTATE, #8
-	;.db	0xa5, 0x85, 0x86
 	mov	0xE3, #0x0f		; Don't know what this does, but
 					; having it here increases reliability.
 	ret
