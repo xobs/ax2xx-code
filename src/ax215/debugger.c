@@ -58,6 +58,7 @@ static int dbg_do_null(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_peek(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_poke(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_jump(struct dbg *dbg, int argc, char **argv);
+static int dbg_do_gpio(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_help(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_memset(struct dbg *dbg, int argc, char **argv);
 static int dbg_do_disasm(struct dbg *dbg, int argc, char **argv);
@@ -133,6 +134,7 @@ static struct debug_command debug_commands[] = {
         .help = "Usage: ram [-d] [-w ram:val] [-r ram] [-x ram]\n"
                 "   -d          Dump internal ram\n"
                 "   -w addr:val Set RAM [addr] to value [val]\n"
+                "   -i addr     Invert RAM contents\n"
                 "   -r addr     Read RAM [addr]\n"
                 "   -x addr     Read 32-bit register [addr]\n"
                 ,
@@ -144,6 +146,7 @@ static struct debug_command debug_commands[] = {
         .help = "Usage: sfr [-d] [-w sfr:val] [-r sfr] [-x sfr]\n"
                 "   -d          Dump special function registers\n"
                 "   -w sfr:val  Set SFR [sfr] to value [val]\n"
+                "   -i addr     Invert RAM contents\n"
                 "   -r sfr      Read SFR [sfr]\n"
                 "   -x sfr      Read extended (quad-wide-wide) sfr\n"
                 ,
@@ -175,6 +178,18 @@ static struct debug_command debug_commands[] = {
                 "   -r      Reset IRQ statistics\n"
                 "   -p      Print IRQ statistics\n"
                 "   -m=mask Set IRQ enable mask\n"
+                ,
+    },
+    {
+        .name = "gpio",
+        .func = dbg_do_gpio,
+        .desc = "Set/query GPIO values\n",
+        .help = "Usage: gpio [-d] [-i DATpin] [-o DATpin] [-s/-c DATpin]\n"
+                "   -d      Dump GPIO values\n"
+                "   -i x    Make DATx a GPIO input\n"
+                "   -o x    Make DATx a GPIO output\n"
+                "   -s x    Set bit on DATx (e.g. write 1 out DATx)\n"
+                "   -c x    Clearit on DATx (e.g. write 0 out DATx)\n"
                 ,
     },
     {
@@ -315,7 +330,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
     if (!strcmp(argv[0], "sfr"))
         offset = 0x80;
 
-    while ((ch = getopt(argc, argv, "dw:r:x:")) != -1) {
+    while ((ch = getopt(argc, argv, "di:w:r:x:")) != -1) {
         switch(ch) {
         case 'd':
             for (sfr = 0; sfr <= 127; sfr++) {
@@ -353,6 +368,27 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                         offset?"SFR":"RAM", sfr, val);
 
                 ram_set(dbg, sfr, val);
+            }
+            break;
+
+        case 'i': {
+                int sfr = strtoul(optarg, NULL, 0);
+                int val;
+                if (offset && (sfr < 0x80 || sfr > 0xff)) {
+                    printf("Invalid SFR.  "
+                            "SFR addresses go between 0x80 and 0xff\n");
+                    return -EINVAL;
+                }
+                if (!offset && (sfr < 0x00 || sfr > 0x7f)) {
+                    printf("Invalid RAM address.  "
+                            "RAM addresses go between 0x00 and 0x7f\n");
+                    return -EINVAL;
+                }
+
+                val = ram_get(dbg, sfr);
+                printf("Setting %s_%02x 0x%02x -> %02x\n",
+                        offset?"SFR":"RAM", sfr, val, 0xff & (~val));
+                ram_set(dbg, sfr, ~val);
             }
             break;
 
@@ -499,6 +535,76 @@ static int dbg_do_irq(struct dbg *dbg, int argc, char **argv) {
 
     if (!handled)
         irq_print_statistics(dbg);
+
+    return 0;
+}
+
+static int gpio_print_state(struct dbg *dbg) {
+    uint8_t values = sd_read_pins(dbg->sd);
+    printf("GPIO pin state:\n");
+    printf("\tDAT0: %d\n", !!(values & 1));
+    printf("\tDAT1: %d\n", !!(values & 2));
+    printf("\tDAT2: %d\n", !!(values & 4));
+    printf("\tDAT3: %d\n", !!(values & 8));
+    return 0;
+}
+
+static int dbg_do_gpio(struct dbg *dbg, int argc, char **argv) {
+    int ch;
+    int handled = 0;
+
+    while ((ch = getopt(argc, argv, "di:o:s:c:")) != -1) {
+        uint8_t dat_n;
+        handled = 1;
+        switch(ch) {
+        case 'i':
+            dat_n = strtoul(optarg, NULL, 0);
+            if (dat_n > 3) {
+                printf("Must specify 0 - 3\n");
+                return -EINVAL;
+            }
+            sd_set_dat_input(dbg->sd, dat_n);
+            break;
+
+        case 'o':
+            dat_n = strtoul(optarg, NULL, 0);
+            if (dat_n > 3) {
+                printf("Must specify 0 - 3\n");
+                return -EINVAL;
+            }
+            sd_set_dat_output(dbg->sd, dat_n);
+            break;
+
+        case 's':
+            dat_n = strtoul(optarg, NULL, 0);
+            if (dat_n > 3) {
+                printf("Must specify 0 - 3\n");
+                return -EINVAL;
+            }
+            sd_set_dat_value(dbg->sd, dat_n, 1);
+            break;
+
+        case 'c':
+            dat_n = strtoul(optarg, NULL, 0);
+            if (dat_n > 3) {
+                printf("Must specify 0 - 3\n");
+                return -EINVAL;
+            }
+            sd_set_dat_value(dbg->sd, dat_n, 0);
+            break;
+
+        case 'd':
+            gpio_print_state(dbg);
+            break;
+
+        default:
+            printf("Try 'help %s'\n", argv[0]);
+            return -EINVAL;
+        }
+    }
+
+    if (!handled)
+        gpio_print_state(dbg);
 
     return 0;
 }
@@ -918,7 +1024,7 @@ static int validate_communication(struct dbg *dbg) {
 }
 
 static int install_isrs(struct dbg *dbg) {
-    printf("Installing interrupt service routines... ");
+    printf("Installing interrupt service routines... [ ");
     xram_set(dbg, 0x00, 0x05);  // INC [iram_addr]
     xram_set(dbg, 0x01, 0x35);  // iram_addr = 0x35
     xram_set(dbg, 0x02, 0x32);  // RETI
@@ -961,7 +1067,7 @@ static int install_isrs(struct dbg *dbg) {
     ram_set(dbg, 0xfb, 0);      // Reset count
     printf("UNK ");
 
-    printf("Okay\n");
+    printf("] Okay\n");
     return 0;
 }
 

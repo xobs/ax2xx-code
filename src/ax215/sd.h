@@ -99,9 +99,13 @@ void rcvr_mmc_dat4 (
 
 int sd_toggle_clk(struct sd_state *state, int times);
 int rcvr_mmc_cmd_start(struct sd_state *state, int tries);
-int sd_read_pins(struct sd_state *state);
 int rcvr_mmc_dat0_start(struct sd_state *state, int tries);
 
 int sd_enter_factory_mode(struct sd_state *state, uint8_t type);
+
+int sd_read_pins(struct sd_state *state);
+int sd_set_dat_output(struct sd_state *state, int datN);
+int sd_set_dat_input(struct sd_state *state, int datN);
+int sd_set_dat_value(struct sd_state *state, int datN, int value);
 
 #endif /* __SD_H__ */

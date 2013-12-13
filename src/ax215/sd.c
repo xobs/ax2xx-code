@@ -1237,12 +1237,14 @@ int sd_mmc_dat4_crc16(uint8_t *bfr, uint8_t *crc_bfr, int size) {
 }
 
 int sd_read_pins(struct sd_state *state) {
+    /*
     gpio_set_direction(state->dat0, GPIO_IN);
     gpio_set_direction(state->dat1, GPIO_IN);
     gpio_set_direction(state->dat2, GPIO_IN);
     gpio_set_direction(state->dat3, GPIO_IN);
     gpio_set_direction(state->cmd, GPIO_IN);
     gpio_set_direction(state->clk, GPIO_IN);
+    */
 
     return
         ((!!gpio_get_value(state->dat0)))
@@ -1254,3 +1256,46 @@ int sd_read_pins(struct sd_state *state) {
       | 0x40
       ;
 }
+
+int sd_set_dat_output(struct sd_state *state, int datN) {
+    if (datN == 0)
+        gpio_set_direction(state->dat0, GPIO_OUT);
+    else if (datN == 1)
+        gpio_set_direction(state->dat1, GPIO_OUT);
+    else if (datN == 2)
+        gpio_set_direction(state->dat2, GPIO_OUT);
+    else if (datN == 3)
+        gpio_set_direction(state->dat3, GPIO_OUT);
+    else
+        return -1;
+    return 0;
+}
+
+int sd_set_dat_input(struct sd_state *state, int datN) {
+    if (datN == 0)
+        gpio_set_direction(state->dat0, GPIO_IN);
+    else if (datN == 1)
+        gpio_set_direction(state->dat1, GPIO_IN);
+    else if (datN == 2)
+        gpio_set_direction(state->dat2, GPIO_IN);
+    else if (datN == 3)
+        gpio_set_direction(state->dat3, GPIO_IN);
+    else
+        return -1;
+    return 0;
+}
+
+int sd_set_dat_value(struct sd_state *state, int datN, int value) {
+    if (datN == 0)
+        gpio_set_value(state->dat0, value);
+    else if (datN == 1)
+        gpio_set_value(state->dat1, value);
+    else if (datN == 2)
+        gpio_set_value(state->dat2, value);
+    else if (datN == 3)
+        gpio_set_value(state->dat3, value);
+    else
+        return -1;
+    return 0;
+}
+
