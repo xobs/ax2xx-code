@@ -144,7 +144,7 @@ static int load_and_enter_debugger(struct sd_state *state, char *filename) {
         xmit_mmc_dat4(state, file, sizeof(file));
 
         /* Wait for the debugger to initialize */
-        ret = rcvr_mmc_dat0_start(state, 100);
+        ret = rcvr_mmc_cmd_start(state, 100);
         if (-1 == ret) {
             printf("DAT0 never started\n");
             continue;

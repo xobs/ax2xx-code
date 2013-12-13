@@ -30,19 +30,19 @@
 ; manipulate the stack so that when we return from interrupt, code execution
 ; will continue at an address immediately following this code section.
 reset_vector:
-	mov	A, #0x09
+	anl	SD_RCVSTATE, #0xFE	; Don't know what this does
+	mov	A, #0x0C
 	push	ACC
 	mov	A, #0x47
 	push	ACC
 	reti			; Return from interrupt, ending up at 0x470c
 
 ;---------------------------------------------------------------------------
-.org 0x4709
+.org 0x470C
 start:
 
 	mov	IEN, #0		; Disable interrupts
 	mov	SP, #0x80	; Reset stack pointer
-	anl	SD_RCVSTATE, #0xFE	; Don't know what this does
 	ljmp	main		; Enter the main() loop
 
 
@@ -153,7 +153,7 @@ cmd8_ext_op:
 
 ; Send an error packet back
 cmd9_error:
-	mov	0x21, #0xa5
+	;mov	0x21, #0xa5
 	sjmp	transmit_and_loop
 
 cmd10_irq:
@@ -207,6 +207,9 @@ setup_sd_rcv:
 	anl	SD_XMIT_STATE, #0xF0
 	orl	SD_RCVSTATE, #4
 	orl	SD_RCVSTATE, #8
+	;.db	0xa5, 0x85, 0x86
+	mov	0xE3, #0x0f		; Don't know what this does, but
+					; having it here increases reliability.
 	ret
 
 ; void receive_one_packet(void)
@@ -222,7 +225,6 @@ setup_sd_rcv:
 receive_one_packet:
 	acall	setup_sd_rcv
 wait_for_packet_start:
-	mov	R5, #0
 	mov	A, SD_XMIT_STATE
 	jnb	ACC.0, wait_for_packet_start
 	anl	SD_XMIT_STATE, #0xFE

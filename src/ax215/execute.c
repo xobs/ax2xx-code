@@ -80,7 +80,7 @@ static int look_for_known_state(struct sd_state *state, int sleeptime) {
 
     printf("Observed %d changes:\n", changes);
     print_hex(slow_response, sizeof(slow_response));
-    return 0;
+    return changes;
 }
 
 int do_dump_rom(struct sd_state *state, int sleeptime) {
@@ -227,7 +227,7 @@ bail:
     return 1;
 }
 
-static int do_enter_debugger(struct sd_state *state)
+static int do_send_debugger_hello(struct sd_state *state)
 {
     uint8_t cmdsize = 6;
     uint8_t cmd[cmdsize];
@@ -236,8 +236,6 @@ static int do_enter_debugger(struct sd_state *state)
 
     for (i=0; i<cmdsize; i++)
         cmd[i] = rand();
-    cmd[0] &= 0x3f;
-    cmd[0] |= 0x40;
     cmd[0] = 0x41;
     cmd[5] = (crc7(cmd, 5)<<1)|1;
 
@@ -249,7 +247,7 @@ static int do_enter_debugger(struct sd_state *state)
     if (-1 == ret)
         printf("No response\n");
     else {
-        uint8_t response[16];
+        uint8_t response[128];
         printf("Response after %d tries\n", ret);
         //rcvr_spi(state, response, sizeof(response));
         //rcvr_mmc_dat4(state, response, sizeof(response));
@@ -264,12 +262,13 @@ static int do_enter_debugger(struct sd_state *state)
 static void patch_file(uint8_t *file, int size) {
     int i;
     for (i = 0; i < size; i++) {
-        if (file[i] == 0xa5) {
+        if (file[i] == 0xa5 && file[i + 1] == 0x85 && file[i + 2] == 0x86) {
             uint8_t sfr;
             uint8_t val;
             do {
                 sfr = rand() | 0x80;
             } while (sfr == 0x80);
+	    sfr = 0xE3;
             val = rand();
 
             printf("    mov     0x%02x, #0x%02x\n", sfr, val);
@@ -327,10 +326,10 @@ int do_one_execute_file(struct sd_state *state,
     if (mode == dump_rom)
         return do_dump_rom(state, 2000);
     else if (mode == enter_debugger)
-        return do_enter_debugger(state);
+        return do_send_debugger_hello(state);
     else if (mode == known_state) {
-        do_enter_debugger(state);
-        return look_for_known_state(state, 2000);
+        do_send_debugger_hello(state);
+        return (look_for_known_state(state, 1000) < 5);
     }
 
     return 0;
