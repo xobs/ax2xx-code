@@ -135,6 +135,7 @@ static struct debug_command debug_commands[] = {
                 "   -d          Dump internal ram\n"
                 "   -w addr:val Set RAM [addr] to value [val]\n"
                 "   -i addr     Invert RAM contents\n"
+                "   -n addr     Set register [addr] to random value\n"
                 "   -r addr     Read RAM [addr]\n"
                 "   -x addr     Read 32-bit register [addr]\n"
                 ,
@@ -147,6 +148,7 @@ static struct debug_command debug_commands[] = {
                 "   -d          Dump special function registers\n"
                 "   -w sfr:val  Set SFR [sfr] to value [val]\n"
                 "   -i addr     Invert RAM contents\n"
+                "   -n addr     Set register [addr] to random value\n"
                 "   -r sfr      Read SFR [sfr]\n"
                 "   -x sfr      Read extended (quad-wide-wide) sfr\n"
                 ,
@@ -173,7 +175,7 @@ static struct debug_command debug_commands[] = {
     {
         .name = "irq",
         .func = dbg_do_irq,
-        .desc = "Manipulate IRQs on the AX215\n",
+        .desc = "Manipulate IRQs on the AX215",
         .help = "Usage: irq [-r] [-m mask] [-p]\n"
                 "   -r      Reset IRQ statistics\n"
                 "   -p      Print IRQ statistics\n"
@@ -183,7 +185,7 @@ static struct debug_command debug_commands[] = {
     {
         .name = "gpio",
         .func = dbg_do_gpio,
-        .desc = "Set/query GPIO values\n",
+        .desc = "Set/query GPIO values",
         .help = "Usage: gpio [-d] [-i DATpin] [-o DATpin] [-s/-c DATpin]\n"
                 "   -d      Dump GPIO values\n"
                 "   -i x    Make DATx a GPIO input\n"
@@ -330,7 +332,7 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
     if (!strcmp(argv[0], "sfr"))
         offset = 0x80;
 
-    while ((ch = getopt(argc, argv, "di:w:r:x:")) != -1) {
+    while ((ch = getopt(argc, argv, "di:w:r:x:n:")) != -1) {
         switch(ch) {
         case 'd':
             for (sfr = 0; sfr <= 127; sfr++) {
@@ -389,6 +391,27 @@ static int dbg_do_sfr(struct dbg *dbg, int argc, char **argv) {
                 printf("Setting %s_%02x 0x%02x -> %02x\n",
                         offset?"SFR":"RAM", sfr, val, 0xff & (~val));
                 ram_set(dbg, sfr, ~val);
+            }
+            break;
+
+        case 'n': {
+                int sfr = strtoul(optarg, NULL, 0);
+                int val;
+                if (offset && (sfr < 0x80 || sfr > 0xff)) {
+                    printf("Invalid SFR.  "
+                            "SFR addresses go between 0x80 and 0xff\n");
+                    return -EINVAL;
+                }
+                if (!offset && (sfr < 0x00 || sfr > 0x7f)) {
+                    printf("Invalid RAM address.  "
+                            "RAM addresses go between 0x00 and 0x7f\n");
+                    return -EINVAL;
+                }
+
+                val = rand() & 0xff;
+                printf("Setting %s_%02x 0x%02x -> %02x\n",
+                        offset?"SFR":"RAM", sfr, ram_get(dbg, sfr), val);
+                ram_set(dbg, sfr, val);
             }
             break;
 
@@ -1067,7 +1090,11 @@ static int install_isrs(struct dbg *dbg) {
     ram_set(dbg, 0xfb, 0);      // Reset count
     printf("UNK ");
 
-    printf("] Okay\n");
+    printf("] ");
+    printf("Enabling... ");
+    ram_set(dbg, 0xa8, 0xff);
+
+    printf("Okay\n");
     return 0;
 }
 
