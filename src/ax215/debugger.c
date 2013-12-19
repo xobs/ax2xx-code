@@ -711,19 +711,41 @@ static int dbg_do_hello(struct dbg *dbg, int argc, char **argv) {
     uint8_t args[4];
     uint8_t response[5];
     memset(args, 0, sizeof(args));
+
     if (argc > 1)
         args[0] = strtoul(argv[1], NULL, 0);
+    else
+        args[0] = rand();
+
     if (argc > 2)
         args[1] = strtoul(argv[2], NULL, 0);
+    else
+        args[1] = rand();
+
     if (argc > 3)
         args[2] = strtoul(argv[3], NULL, 0);
+    else
+        args[2] = rand();
+
     if (argc > 4)
         args[3] = strtoul(argv[4], NULL, 0);
+    else
+        args[3] = rand();
 
     dbg_txrx(dbg, cmd_hello, args, response, sizeof(response));
 
-    printf("CPU -> AX215: {%02x %02x %02x %02x}\n", args[0], args[1], args[2], args[3]);
-    printf("CPU <- AX215: {%02x %02x %02x %02x}\n", response[0], response[1], response[2], response[3]);
+    printf("Sending ");
+    printf("CPU -> AX215: {%02x %02x %02x %02x %02x}\n", cmd_hello | 0x40,
+            args[0], args[1], args[2], args[3]);
+
+    printf("Response ");
+    printf("CPU <- AX215: {%02x %02x %02x %02x %02x}\n",response[0],
+            response[1], response[2], response[3], response[4]);
+
+    if (!memcmp(response + 1, args, sizeof(args)))
+        printf("Okay\n");
+    else
+        printf("Error: Response was different\n");
 
     return 0;
 }
