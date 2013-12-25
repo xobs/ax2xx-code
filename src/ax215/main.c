@@ -74,6 +74,7 @@ static int send_cmdX(struct sd_state *state,
         out_bfr[0] = result;
         printf("Run %-4d  ", run);
         print_header(bfr);
+        printf("\n");
         print_hex(out_bfr, print_size);
     }
     run++;

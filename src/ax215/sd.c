@@ -647,8 +647,6 @@ uint8_t send_cmd (      /* Returns command response (bit7==1:Send failed)*/
         rcvr_spi(state, &d, 1);
     while ((d & 0x80) && --n);
 
-        printf("Sending CMD%d {0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x}: %x\n",
-                buf[0]&0x3f, buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], d);
     return d;           /* Return with the response value */
 }
 
